@@ -1,0 +1,393 @@
+import React, { useEffect, useState, useRef } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+  Animated,
+  Dimensions,
+  Easing,
+  InteractionManager,
+} from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { Spacing } from '../constants/theme';
+import { Header } from '../components/Header';
+import { BottomSkylineSvg } from '../components/BottomSkylineSvg';
+import { useAppTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
+import { translations } from '../constants/translations';
+import { useAuth } from '../context/AuthContext';
+import * as api from '../services/api';
+
+const { width } = Dimensions.get('window');
+
+type StepState = 'validating' | 'checking_limit' | 'submitting';
+
+export default function TransactionProcessing() {
+  const router = useRouter();
+  const { theme } = useAppTheme();
+  const { language } = useLanguage();
+  const t = translations[language];
+  const { user, updateUser } = useAuth();
+
+  // Retrieve incoming transaction details
+  const params = useLocalSearchParams();
+  const { receiverUsername, amount, type = 'send_money', billerName, billerAccountNo, mobileNumber, operator, merchantName } = params;
+
+  // Active step flow
+  const [authStep, setAuthStep] = useState<StepState>('validating');
+
+  // Animation values
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const rotationAnim = useRef(new Animated.Value(0)).current;
+  const loopAnimPulseRef = useRef<Animated.CompositeAnimation | null>(null);
+  const loopAnimRotRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  // Use a ref to track if component is mounted
+  const isMounted = useRef(true);
+
+  // Setup loop pulsing and rotation animations on mount after interactions settle
+  useEffect(() => {
+    isMounted.current = true;
+
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (!isMounted.current) return;
+      console.log('🌟 [DIAGNOSTIC] TransactionProcessing - Screen mounted cleanly in Fabric with 0 collisions!');
+
+      // Pulsing circle
+      loopAnimPulseRef.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.08,
+            duration: 1000,
+            useNativeDriver: true,
+            easing: Easing.inOut(Easing.ease),
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1.0,
+            duration: 1000,
+            useNativeDriver: true,
+            easing: Easing.inOut(Easing.ease),
+          }),
+        ])
+      );
+      loopAnimPulseRef.current.start();
+
+      // Spin loader ring
+      loopAnimRotRef.current = Animated.loop(
+        Animated.timing(rotationAnim, {
+          toValue: 1,
+          duration: 2000,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      );
+      loopAnimRotRef.current.start();
+    });
+
+    runTransactionFlow();
+
+    return () => {
+      isMounted.current = false;
+      task.cancel();
+      if (loopAnimPulseRef.current) loopAnimPulseRef.current.stop();
+      if (loopAnimRotRef.current) loopAnimRotRef.current.stop();
+      pulseAnim.stopAnimation();
+      rotationAnim.stopAnimation();
+    };
+  }, []);
+
+  const runTransactionFlow = async () => {
+    if (!user?.username) {
+      router.replace('/login');
+      return;
+    }
+
+    try {
+      // Step 1: Validating (Show for 1 second)
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (!isMounted.current) return;
+
+      // Transition to Step 2: Checking limit
+      setAuthStep('checking_limit');
+
+      // Call the REAL backend API to perform the transfer
+      const cleanedAmount = parseFloat(Array.isArray(amount) ? amount[0] : amount || '0');
+      const receiver = Array.isArray(receiverUsername) ? receiverUsername[0] : receiverUsername || '';
+      // Strip '@' if passed from send-money screen
+      const cleanedReceiver = receiver.startsWith('@') ? receiver.slice(1) : receiver;
+
+      console.log('[DIAGNOSTIC] TransactionProcessing - About to call api.transfer() with:', {
+        userUsername: user.username,
+        cleanedReceiver,
+        cleanedAmount,
+        type,
+        rawParams: params,
+      });
+
+      const result = await api.transfer(user.username, cleanedReceiver, cleanedAmount);
+
+      console.log('[DIAGNOSTIC] TransactionProcessing - api.transfer() returned result:', result);
+
+      if (!isMounted.current) return;
+
+      if (result.success && result.data) {
+        // SUCCESS: Update balance and limits in context so Dashboard reflects them
+        const data = result.data.user || result.data;
+        const newBalance = data.new_balance ?? data.balance;
+        const newTodaySpent = data.today_spent ?? data.todaySpent;
+
+        await updateUser({
+          ...user,
+          balance: newBalance !== undefined ? newBalance : user.balance,
+          today_spent: newTodaySpent !== undefined ? newTodaySpent : user.today_spent,
+        });
+
+        // Transition to Step 3: Submitting
+        setAuthStep('submitting');
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        if (!isMounted.current) return;
+
+        // Navigate to success results
+        router.replace({
+          pathname: '/transaction-result',
+          params: {
+            status: 'success',
+            receiverUsername: cleanedReceiver,
+            amount: cleanedAmount.toString(),
+            referenceNo: result.data.reference || result.data.referenceNo || result.data.id || String(Math.floor(100000 + Math.random() * 900000)),
+            dateTime: new Date().toLocaleString(),
+            type,
+            billerName,
+            billerAccountNo,
+            mobileNumber,
+            operator,
+            merchantName,
+          },
+        });
+      } else {
+        // FAILURE: Map error string to result status codes
+        const errorMsg = result.message || '';
+        let mappedStatus = 'transfer_failed';
+
+        if (errorMsg.toLowerCase().includes('insufficient') || errorMsg.toLowerCase().includes('balance')) {
+          mappedStatus = 'insufficient_balance';
+        } else if (errorMsg.toLowerCase().includes('receiver') || errorMsg.toLowerCase().includes('not found')) {
+          mappedStatus = 'receiver_not_found';
+        } else if (errorMsg.toLowerCase().includes('hmac') || errorMsg.toLowerCase().includes('handshake')) {
+          mappedStatus = 'hmac_mismatch';
+        }
+
+        router.replace({
+          pathname: '/transaction-result',
+          params: {
+            status: mappedStatus,
+            receiverUsername: cleanedReceiver,
+            amount: cleanedAmount.toString(),
+            type,
+            billerName,
+            billerAccountNo,
+            mobileNumber,
+            operator,
+            merchantName,
+            errorReason: errorMsg,
+          },
+        });
+      }
+    } catch (e) {
+      if (!isMounted.current) return;
+      router.replace({
+        pathname: '/transaction-result',
+        params: {
+          status: 'transfer_failed',
+          receiverUsername: Array.isArray(receiverUsername) ? receiverUsername[0] : receiverUsername || '',
+          amount: Array.isArray(amount) ? amount[0] : amount || '0',
+          type,
+          merchantName: Array.isArray(merchantName) ? merchantName[0] : merchantName || '',
+        },
+      });
+    }
+  };
+
+  const handleCancel = () => {
+    router.replace('/dashboard');
+  };
+
+  // Convert rotation value to degrees string
+  const spinRotation = rotationAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  const getStepText = () => {
+    if (authStep === 'validating') return t.validatingSignaturesStep;
+    if (authStep === 'checking_limit') return t.establishingEncryptedStep;
+    return t.finalizingLedgerStep;
+  };
+
+  const getStepNumber = () => {
+    if (authStep === 'validating') return '1';
+    if (authStep === 'checking_limit') return '2';
+    return '3';
+  };
+
+  return (
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
+      <Header showBackButton={false} />
+
+      <View style={styles.contentContainer}>
+        {/* Core Processing Visual Indicator */}
+        <View style={styles.centerWrapper}>
+          <Animated.View style={[styles.pulseOuter, { transform: [{ scale: pulseAnim }] }]}>
+            <View style={[styles.processingCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              
+              <View style={styles.ringWrapper}>
+                {/* Spinning indicator ring */}
+                <Animated.View
+                  style={[
+                    styles.spinningRing,
+                    {
+                      borderColor: theme.border,
+                      borderTopColor: theme.primary,
+                      transform: [{ rotate: spinRotation }],
+                    },
+                  ]}
+                />
+                
+                {/* Center static processing bubble */}
+                <View style={[styles.processingCircle, { backgroundColor: theme.background, borderColor: theme.border, shadowColor: theme.primary }]}>
+                  <ActivityIndicator size="small" color={theme.primary} />
+                </View>
+              </View>
+
+              {/* Status Header */}
+              <Text style={[styles.statusText, { color: theme.text }]}>{getStepText()}</Text>
+
+              {/* Active Step Badge */}
+              <View style={[styles.stepBadge, { backgroundColor: theme.border }]}>
+                <Text style={[styles.stepBadgeText, { color: theme.textSecondary }]}>
+                  {language === 'en' ? `Step ${getStepNumber()} of 3` : `ধাপ ${getStepNumber()}/৩`}
+                </Text>
+              </View>
+
+            </View>
+          </Animated.View>
+        </View>
+
+        {/* Action Button: Cancel Payment */}
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity
+            style={[styles.cancelButton, { borderColor: theme.border, backgroundColor: theme.background }]}
+            onPress={handleCancel}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="close" size={20} color={theme.textSecondary} style={styles.cancelIcon} />
+            <Text style={[styles.cancelButtonText, { color: theme.textSecondary }]}>{t.cancel}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Skyline footer illustration in brand purple */}
+      <BottomSkylineSvg color={theme.primary} />
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  contentContainer: {
+    flex: 1,
+    paddingHorizontal: Spacing.xxl,
+    justifyContent: 'space-between',
+    paddingBottom: Spacing.xl,
+    zIndex: 1,
+  },
+  centerWrapper: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pulseOuter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  processingCard: {
+    width: '100%',
+    borderWidth: 1.5,
+    borderRadius: 32,
+    paddingVertical: Spacing.huge,
+    alignItems: 'center',
+    gap: Spacing.lg,
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.05,
+    shadowRadius: 20,
+    elevation: 3,
+  },
+  ringWrapper: {
+    width: 110,
+    height: 110,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  spinningRing: {
+    position: 'absolute',
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    borderWidth: 4,
+  },
+  processingCircle: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  statusText: {
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  stepBadge: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+  },
+  stepBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  buttonContainer: {
+    width: '100%',
+    paddingBottom: Spacing.md,
+  },
+  cancelButton: {
+    height: 60,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cancelIcon: {
+    marginRight: Spacing.xs,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+});
