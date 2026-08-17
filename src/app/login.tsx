@@ -135,12 +135,9 @@ export default function Login() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Top Logo & App Title with punchline */}
+          {/* Top Big Centered Logo & Punchline */}
           <View style={styles.logoContainer}>
-            <LogoMark size={64} />
-            <Text style={[styles.logoText, { color: theme.text }]}>
-              D<Text style={[styles.logoTextAccent, { color: theme.primary }]}>PT</Text>
-            </Text>
+            <LogoMark size={110} />
           </View>
           <Text style={[styles.brandSlogan, { color: theme.textSecondary }]}>
             Digital Pocket Transaction
