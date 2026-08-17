@@ -121,6 +121,33 @@ export async function saveCachedUser(username: string, userData: any): Promise<v
 }
 
 /**
+ * Calculate the total amount spent strictly TODAY (since midnight 00:00:00 local time)
+ * for outgoing debits/transfers from cached transactions.
+ */
+export async function getTodaySpent(username: string): Promise<number> {
+  try {
+    const db = await getDb();
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const startOfDayEpoch = startOfDay.getTime();
+
+    const row = await db.getFirstAsync<{ today_total: number | null }>(
+      `SELECT SUM(amount) as today_total FROM cached_transactions 
+       WHERE username = ? 
+       AND created_at_epoch >= ? 
+       AND status = 'success'
+       AND (type = 'transfer' OR type = 'user_transfer' OR type = 'send_money' OR type = 'merchant_payment' OR type = 'mobile_recharge' OR type = 'bill_payment' OR type = 'cashout' OR type = 'cash_out' OR type = 'qr_payment')`,
+      [username, startOfDayEpoch]
+    );
+
+    return row?.today_total ? Number(row.today_total) : 0;
+  } catch (error) {
+    console.warn('Failed to calculate today spent from SQLite:', error);
+    return 0;
+  }
+}
+
+/**
  * Retrieve cached transaction history for a given username, sorted numerically by epoch.
  */
 export async function getCachedTransactions(username: string): Promise<any[]> {

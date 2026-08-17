@@ -21,6 +21,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+import * as db from '../services/db';
 
 export default function SendMoney() {
   const router = useRouter();
@@ -49,10 +50,25 @@ export default function SendMoney() {
   const receiverRef = useRef<TextInput>(null);
   const amountRef = useRef<TextInput>(null);
 
-  // Real Limits Data from user session state (unwrapped safely to prevent nesting issues)
+  // Real Limits Data from user session state & SQLite today's transactions
   const userData = user?.user || user;
   const DAILY_LIMIT = parseFloat(userData?.daily_limit || userData?.dailyLimit || 5000);
-  const ALREADY_SPENT = parseFloat(userData?.today_spent || userData?.todaySpent || 0);
+  const [spentToday, setSpentToday] = useState<number>(() => {
+    return parseFloat(userData?.today_spent || userData?.todaySpent || 0);
+  });
+
+  const loadTodaySpent = async () => {
+    if (user?.username) {
+      const computed = await db.getTodaySpent(user.username);
+      setSpentToday(computed);
+    }
+  };
+
+  useEffect(() => {
+    loadTodaySpent();
+  }, [user?.username, user?.balance]);
+
+  const ALREADY_SPENT = spentToday;
   const REMAINING_LIMIT = Math.max(0, DAILY_LIMIT - ALREADY_SPENT);
 
   // Cleanup timers on unmount
