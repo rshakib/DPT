@@ -143,15 +143,24 @@ export async function checkReceiver(username: string): Promise<ApiResult<any>> {
   }
 }
 
-// 4. transfer(username, receiver, amount)
+// 4. transfer(username, receiver, amount, idempotencyKey?)
 export async function transfer(
   username: string,
   receiver: string,
-  amount: number
+  amount: number,
+  idempotencyKey?: string
 ): Promise<ApiResult<any>> {
   try {
-    const payload = { username, receiver, amount };
+    const payload: Record<string, any> = { username, receiver, amount };
+    if (idempotencyKey) {
+      payload.idempotencyKey = idempotencyKey;
+      payload.idempotency_key = idempotencyKey;
+    }
     const headers = await getHeaders(true);
+    if (idempotencyKey) {
+      headers['X-Idempotency-Key'] = idempotencyKey;
+      headers['Idempotency-Key'] = idempotencyKey;
+    }
     const response = await fetch(`${BASE_URL}/transfer`, {
       method: 'POST',
       headers,

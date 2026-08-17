@@ -23,6 +23,8 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import * as db from '../services/db';
 
+import { generateUUID } from '../utils/security';
+
 const { width } = Dimensions.get('window');
 
 type StepState = 'validating' | 'checking_limit' | 'submitting';
@@ -63,6 +65,7 @@ export function TransactionProcessingView({
 
   const isMounted = useRef(true);
   const isNavigatingRef = useRef(false);
+  const idempotencyKeyRef = useRef<string>(generateUUID());
 
   const safeReplace = (target: any) => {
     if (isNavigatingRef.current || !isMounted.current) return;
@@ -133,7 +136,7 @@ export function TransactionProcessingView({
       const receiver = Array.isArray(receiverUsername) ? receiverUsername[0] : receiverUsername || '';
       const cleanedReceiver = receiver.startsWith('@') ? receiver.slice(1) : receiver;
 
-      const result = await api.transfer(user.username, cleanedReceiver, cleanedAmount);
+      const result = await api.transfer(user.username, cleanedReceiver, cleanedAmount, idempotencyKeyRef.current);
 
       if (!isMounted.current) return;
 
