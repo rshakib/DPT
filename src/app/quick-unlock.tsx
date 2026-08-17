@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { useRouter } from 'expo-router';
 import { Spacing } from '../constants/theme';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -20,11 +21,12 @@ import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import { useAppLock } from '../context/AppLockContext';
 import { LogoMark } from '../components/Logo';
-import { verifyPinLocally } from '../utils/security';
+import { verifyPinLocally, getPinLockoutStatus } from '../utils/security';
 
 type UnlockStep = 'pin' | 'biometric' | 'unlocked';
 
 export default function QuickUnlock() {
+  const router = useRouter();
   const { theme, isDarkMode } = useAppTheme();
   const { language, toggleLanguage } = useLanguage();
   const t = translations[language];
@@ -49,6 +51,14 @@ export default function QuickUnlock() {
   useEffect(() => {
     isMounted.current = true;
     checkBiometricsSupport();
+    const username = user?.username || lastLoggedInUser || '';
+    if (username) {
+      getPinLockoutStatus(username).then((status) => {
+        if (status.isLocked && isMounted.current) {
+          setPinError(status.message || 'PIN authentication is locked for 15 minutes.');
+        }
+      });
+    }
     return () => {
       isMounted.current = false;
     };
@@ -179,10 +189,14 @@ export default function QuickUnlock() {
 
   const handleSwitchAccount = async () => {
     await switchAccount();
+    unlock();
+    router.replace('/login');
   };
 
   const handleLogout = async () => {
     await logout();
+    unlock();
+    router.replace('/login');
   };
 
   const displayName = user?.name || user?.username || lastLoggedInUser || (language === 'en' ? 'User' : 'গ্রাহক');
