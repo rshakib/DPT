@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, InteractionManager } from 'react-native';
 import { ThemeProvider, useAppTheme } from '../context/ThemeContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { AuthProvider, useAuth } from '../context/AuthContext';
@@ -22,14 +22,20 @@ function RootLayoutContent() {
     const inAuthGroup = firstSegment === 'login' || firstSegment === 'quick-unlock' || firstSegment === 'index' || firstSegment === 'create-password' || firstSegment === 'officer-verify';
 
     if (isAuthenticated) {
-      if (isLocked && segments[0] !== 'quick-unlock') {
-        router.replace('/quick-unlock');
+      if (isLocked && firstSegment !== 'quick-unlock') {
+        InteractionManager.runAfterInteractions(() => {
+          router.replace('/quick-unlock');
+        });
       } else if (!isLocked && inAuthGroup) {
-        router.replace('/dashboard');
+        InteractionManager.runAfterInteractions(() => {
+          router.replace('/dashboard');
+        });
       }
     } else {
-      if (!inAuthGroup) {
-        router.replace('/login');
+      if (!inAuthGroup && firstSegment !== '') {
+        InteractionManager.runAfterInteractions(() => {
+          router.replace('/login');
+        });
       }
     }
   }, [isAuthenticated, isInitializing, isLocked, segments]);
