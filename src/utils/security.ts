@@ -31,9 +31,100 @@ export async function saveLocalPinHash(username: string, pin: string): Promise<v
   }
 }
 
+const PIN_ATTEMPTS_PREFIX = 'niropay_pin_attempts_';
+const PIN_LOCKOUT_PREFIX = 'niropay_pin_lockout_';
+const MAX_FAILED_ATTEMPTS = 3;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+export interface PinLockoutStatus {
+  isLocked: boolean;
+  remainingMinutes: number;
+  message?: string;
+}
+
+/**
+ * Checks if PIN authentication is currently locked out for a given username.
+ */
+export async function getPinLockoutStatus(username: string): Promise<PinLockoutStatus> {
+  if (!username) return { isLocked: false, remainingMinutes: 0 };
+  const cleanUsername = username.trim().toLowerCase();
+  const lockoutKey = `${PIN_LOCKOUT_PREFIX}${cleanUsername}`;
+  const attemptsKey = `${PIN_ATTEMPTS_PREFIX}${cleanUsername}`;
+
+  try {
+    const lockoutUntilStr = await SecureStore.getItemAsync(lockoutKey);
+    if (lockoutUntilStr) {
+      const lockoutUntil = Number(lockoutUntilStr);
+      const now = Date.now();
+      if (now < lockoutUntil) {
+        const remainingMinutes = Math.max(1, Math.ceil((lockoutUntil - now) / 60000));
+        return {
+          isLocked: true,
+          remainingMinutes,
+          message: `Too many incorrect PIN attempts. PIN authentication is locked for 15 minutes. Try again in ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}.`,
+        };
+      } else {
+        // Lockout expired - clean up lock state
+        await SecureStore.deleteItemAsync(lockoutKey);
+        await SecureStore.deleteItemAsync(attemptsKey);
+      }
+    }
+  } catch (error) {
+    console.warn('[SECURITY] Error checking PIN lockout status:', error);
+  }
+
+  return { isLocked: false, remainingMinutes: 0 };
+}
+
+/**
+ * Records a failed PIN attempt and locks authentication if 3 consecutive failures occur.
+ */
+async function recordFailedPinAttempt(cleanUsername: string): Promise<string> {
+  const lockoutKey = `${PIN_LOCKOUT_PREFIX}${cleanUsername}`;
+  const attemptsKey = `${PIN_ATTEMPTS_PREFIX}${cleanUsername}`;
+
+  try {
+    const currentAttemptsStr = await SecureStore.getItemAsync(attemptsKey);
+    const currentAttempts = currentAttemptsStr ? Number(currentAttemptsStr) : 0;
+    const newAttempts = currentAttempts + 1;
+
+    if (newAttempts >= MAX_FAILED_ATTEMPTS) {
+      const lockoutUntil = Date.now() + LOCKOUT_DURATION_MS;
+      await SecureStore.setItemAsync(lockoutKey, String(lockoutUntil));
+      await SecureStore.setItemAsync(attemptsKey, String(MAX_FAILED_ATTEMPTS));
+      return 'Too many incorrect PIN attempts. PIN authentication is locked for 15 minutes.';
+    } else {
+      await SecureStore.setItemAsync(attemptsKey, String(newAttempts));
+      const remainingAttempts = MAX_FAILED_ATTEMPTS - newAttempts;
+      return `Invalid PIN. ${remainingAttempts} attempt${remainingAttempts > 1 ? 's' : ''} remaining.`;
+    }
+  } catch (error) {
+    console.warn('[SECURITY] Error recording failed PIN attempt:', error);
+    return 'Invalid PIN';
+  }
+}
+
+/**
+ * Resets the failed attempt counter and clears lockout status for a username.
+ */
+export async function resetPinLockout(username: string): Promise<void> {
+  if (!username) return;
+  const cleanUsername = username.trim().toLowerCase();
+  const lockoutKey = `${PIN_LOCKOUT_PREFIX}${cleanUsername}`;
+  const attemptsKey = `${PIN_ATTEMPTS_PREFIX}${cleanUsername}`;
+
+  try {
+    await SecureStore.deleteItemAsync(attemptsKey);
+    await SecureStore.deleteItemAsync(lockoutKey);
+  } catch (error) {
+    console.warn('[SECURITY] Error resetting PIN lockout state:', error);
+  }
+}
+
 /**
  * Verifies a PIN locally using hardware SecureStore (0ms latency, 100% offline).
  * If no local hash exists, falls back to server verification and saves the local hash on success.
+ * Enforces 3-strike 15-minute brute-force lockout persisted in SecureStore.
  */
 export async function verifyPinLocally(
   username: string,
@@ -44,7 +135,15 @@ export async function verifyPinLocally(
   }
 
   const cleanUsername = username.trim().toLowerCase();
+
+  // 1. Enforce PIN Lockout Check BEFORE performing verification
+  const lockoutStatus = await getPinLockoutStatus(cleanUsername);
+  if (lockoutStatus.isLocked) {
+    return { success: false, message: lockoutStatus.message };
+  }
+
   const key = `${PIN_HASH_PREFIX}${cleanUsername}`;
+  let isMatch = false;
 
   try {
     const storedHash = await SecureStore.getItemAsync(key);
@@ -53,23 +152,28 @@ export async function verifyPinLocally(
       // Offline verification via salted SHA-256 hash comparison
       const computedHash = await computePinHash(cleanUsername, pin);
       if (computedHash === storedHash) {
-        return { success: true };
-      } else {
-        return { success: false, message: 'Invalid PIN' };
+        isMatch = true;
+      }
+    } else {
+      // Fallback to online server verification if local hash is missing or on error
+      const serverResult = await api.verifyPin(cleanUsername, pin);
+      if (serverResult.success) {
+        await saveLocalPinHash(cleanUsername, pin);
+        isMatch = true;
       }
     }
   } catch (error) {
-    console.warn('[SECURITY] Error reading local PIN hash, falling back to server verification:', error);
+    console.warn('[SECURITY] Error during PIN verification:', error);
   }
 
-  // Fallback to online server verification if local hash is missing or on error
-  const serverResult = await api.verifyPin(cleanUsername, pin);
-  if (serverResult.success) {
-    // Cache the hash locally for future offline verifications
-    await saveLocalPinHash(cleanUsername, pin);
+  if (isMatch) {
+    // Correct PIN: Reset failed attempt counter and clear lock state
+    await resetPinLockout(cleanUsername);
     return { success: true };
   } else {
-    return { success: false, message: serverResult.message || 'Invalid PIN' };
+    // Incorrect PIN: Record failed attempt and trigger 15-minute lockout on 3rd failure
+    const errorMsg = await recordFailedPinAttempt(cleanUsername);
+    return { success: false, message: errorMsg };
   }
 }
 

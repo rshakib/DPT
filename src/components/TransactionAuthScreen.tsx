@@ -22,7 +22,8 @@ import { Header } from './Header';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
-import { syncService } from '../services/sync';
+import { useAuth } from '../context/AuthContext';
+import { getPinLockoutStatus } from '../utils/security';
 
 const { width } = Dimensions.get('window');
 
@@ -112,12 +113,22 @@ export function TransactionAuthScreen({
     onAuthorized();
   };
 
-  // Check biometric support on mount and attempt authentication
+  const { user } = useAuth();
+
+  // Check biometric support and PIN lockout status on mount
   useEffect(() => {
     isMounted.current = true;
     const nodeTag = containerRef.current ? findNodeHandle(containerRef.current) : null;
     console.log(`[DPT_NATIVE_TRACE][MOUNT] screen=TransactionAuthScreen nativeTag=${nodeTag} timestamp=${Date.now()}`);
     
+    if (user?.username) {
+      getPinLockoutStatus(user.username).then((status) => {
+        if (status.isLocked && isMounted.current) {
+          setPinError(status.message || 'PIN authentication is locked for 15 minutes.');
+        }
+      });
+    }
+
     checkBiometrics();
     return () => {
       isMounted.current = false;
