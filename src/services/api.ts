@@ -94,10 +94,11 @@ export async function register(
   activationCode: string
 ): Promise<ApiResult<any>> {
   try {
+    const cleanUsername = username.toLowerCase().trim();
     const response = await fetch(`${BASE_URL}/register`, {
       method: 'POST',
       headers: await getHeaders(false),
-      body: JSON.stringify({ username, password, nid, activationCode }),
+      body: JSON.stringify({ username: cleanUsername, password, nid, activationCode }),
     });
 
     const parsed = await safeParseJsonResponse(response);

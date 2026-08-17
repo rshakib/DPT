@@ -14,6 +14,7 @@ import { Spacing } from '../constants/theme';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
+import { useAuth } from '../context/AuthContext';
 
 const { width } = Dimensions.get('window');
 
@@ -27,10 +28,14 @@ export default function ActivationSuccess() {
   const { theme, isDarkMode } = useAppTheme();
   const { language } = useLanguage();
   const t = translations[language];
+  const { isAuthenticated } = useAuth();
 
-  const handleGoToLogin = () => {
-    // Replace the navigation stack so user cannot swipe back into registration
-    router.replace('/login');
+  const handleAction = () => {
+    if (isAuthenticated) {
+      router.replace('/dashboard');
+    } else {
+      router.replace('/login');
+    }
   };
 
   return (
@@ -111,11 +116,20 @@ export default function ActivationSuccess() {
       <View style={[styles.buttonContainer, { backgroundColor: theme.background, borderTopColor: theme.border }]}>
         <TouchableOpacity
           style={[styles.loginButton, { backgroundColor: theme.primary, shadowColor: theme.primary }]}
-          onPress={handleGoToLogin}
+          onPress={handleAction}
           activeOpacity={0.8}
         >
-          <Ionicons name="log-in-outline" size={24} color="#FFFFFF" style={styles.loginButtonIcon} />
-          <Text style={styles.loginButtonText}>{t.goToLogin}</Text>
+          <Ionicons
+            name={isAuthenticated ? "arrow-forward-outline" : "log-in-outline"}
+            size={24}
+            color="#FFFFFF"
+            style={styles.loginButtonIcon}
+          />
+          <Text style={styles.loginButtonText}>
+            {isAuthenticated
+              ? (language === 'en' ? 'Enter Application' : 'অ্যাপে প্রবেশ করুন')
+              : t.goToLogin}
+          </Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

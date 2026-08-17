@@ -81,7 +81,7 @@ export default function OfficerVerify() {
       params: {
         nid: nid.trim(),
         activationCode: activationCode.trim(),
-        username: username.trim(),
+        username: username.toLowerCase().trim(),
       },
     });
   };
