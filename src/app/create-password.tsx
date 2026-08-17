@@ -127,21 +127,24 @@ export default function CreatePassword() {
         const loginRes = await login(normalizedUsername, password);
         if (loginRes.success) {
           unlock();
+          setIsLoading(false);
+
+          // SUCCESS STATE: Navigate to success page
+          router.push({
+            pathname: '/activation-success',
+            params: {
+              nid,
+              activationCode,
+              username: normalizedUsername,
+              bp,
+              password, // Passing the PIN value
+            },
+          });
+        } else {
+          setIsLoading(false);
+          setShowErrorBanner(true);
+          setErrorMessage(`Account created, but automatic sign-in failed: ${loginRes.message || 'Authentication error'}`);
         }
-
-        setIsLoading(false);
-
-        // SUCCESS STATE: Navigate to success page
-        router.push({
-          pathname: '/activation-success',
-          params: {
-            nid,
-            activationCode,
-            username: normalizedUsername,
-            bp,
-            password, // Passing the PIN value
-          },
-        });
       } else {
         setIsLoading(false);
         // ERROR STATE: Show failure banner with real API message
