@@ -21,8 +21,6 @@ import { Image } from 'react-native';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
-import { useAuth } from '../context/AuthContext';
-import { useAppLock } from '../context/AppLockContext';
 import * as api from '../services/api';
 import { saveLocalPinHash } from '../utils/security';
 
@@ -33,18 +31,10 @@ export default function CreatePassword() {
   const { theme, isDarkMode } = useAppTheme();
   const { language } = useLanguage();
   const t = translations[language];
-  const { login } = useAuth();
-  const { unlock } = useAppLock();
   
   // Retrieve navigation parameters from previous screens
   const params = useLocalSearchParams();
-  const rawNid = Array.isArray(params.nid) ? params.nid[0] : params.nid;
-  const rawCode = Array.isArray(params.activationCode) ? params.activationCode[0] : params.activationCode;
-  const rawUser = Array.isArray(params.username) ? params.username[0] : params.username;
-
-  const nid = String(rawNid || '').trim();
-  const activationCode = String(rawCode || '').trim();
-  const username = String(rawUser || '').toLowerCase().trim();
+  const { nid = '', activationCode = '', username = '', bp = '' } = params;
 
   // Form States (PIN values)
   const [password, setPassword] = useState(''); // Stores the PIN
@@ -117,42 +107,29 @@ export default function CreatePassword() {
     setFieldErrors({});
 
     try {
-      const normalizedUsername = String(username).toLowerCase().trim();
-      const userFullName = Array.isArray(params.fullName) ? params.fullName[0] : params.fullName || '';
-
       const result = await api.register(
-        normalizedUsername,
+        String(username),
         password,
         String(nid),
         String(activationCode)
       );
 
+      setIsLoading(false);
+
       if (result.success) {
-        await saveLocalPinHash(normalizedUsername, password);
-
-        // Auto-authenticate session, update AuthContext & SecureStore, and seed SQLite cache
-        const loginRes = await login(normalizedUsername, password);
-        if (loginRes.success) {
-          unlock();
-          setIsLoading(false);
-
-          // SUCCESS STATE: Navigate to Biometric Enrollment page in page flow
-          router.push({
-            pathname: '/biometric-enrollment',
-            params: {
-              nid: String(nid),
-              activationCode: String(activationCode),
-              username: normalizedUsername,
-              fullName: String(userFullName),
-            },
-          });
-        } else {
-          setIsLoading(false);
-          setShowErrorBanner(true);
-          setErrorMessage(`Account created, but automatic sign-in failed: ${loginRes.message || 'Authentication error'}`);
-        }
+        await saveLocalPinHash(String(username), password);
+        // SUCCESS STATE: Navigate to Biometric Enrollment screen in onboarding page order
+        router.push({
+          pathname: '/biometric-enrollment',
+          params: {
+            nid,
+            activationCode,
+            username,
+            bp,
+            password, // Passing the PIN value
+          },
+        });
       } else {
-        setIsLoading(false);
         // ERROR STATE: Show failure banner with real API message
         setShowErrorBanner(true);
         setErrorMessage(result.message || 'Registration failed.');

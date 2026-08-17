@@ -75,13 +75,13 @@ export default function OfficerVerify() {
   const handleContinue = () => {
     if (!isFormValid) return;
 
-    // Navigate to Enter Name screen passing form values as query params
+    // Navigate to biometric enrollment passing form values as query params
     router.push({
-      pathname: '/enter-name',
+      pathname: '/biometric-enrollment',
       params: {
         nid: nid.trim(),
         activationCode: activationCode.trim(),
-        username: username.toLowerCase().trim(),
+        username: username.trim(),
       },
     });
   };
