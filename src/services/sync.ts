@@ -114,6 +114,24 @@ class SyncService {
     console.log(`[SYNC SERVICE] Starting deltaSync for user: ${username}`);
 
     try {
+      // 0. Flush any pending offline transactions to server
+      const pendingTx = await db.getPendingOfflineTransactions(username);
+      if (pendingTx && pendingTx.length > 0) {
+        console.log(`[SYNC SERVICE] Found ${pendingTx.length} pending offline transactions. Flushing to server...`);
+        for (const offlineItem of pendingTx) {
+          try {
+            const transferRes = await api.transfer(username, offlineItem.receiver, offlineItem.amount);
+            if (transferRes.success) {
+              console.log(`[SYNC SERVICE] Offline transaction ${offlineItem.id} settled successfully!`);
+              await db.removePendingOfflineTransaction(offlineItem.id);
+              hasChanges = true;
+            }
+          } catch (e) {
+            console.warn(`[SYNC SERVICE] Retrying offline transaction ${offlineItem.id} later:`, e);
+          }
+        }
+      }
+
       // 1. User profile sync
       const userRes = await api.getUser(username);
       if (userRes.success && userRes.data) {

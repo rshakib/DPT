@@ -21,6 +21,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+import * as db from '../services/db';
 
 const { width } = Dimensions.get('window');
 
@@ -170,10 +171,42 @@ export default function TransactionProcessing() {
           },
         });
       } else {
-        // FAILURE: Map error string to result status codes
         const errorMsg = result.message || '';
-        let mappedStatus = 'transfer_failed';
 
+        // If failure is strictly due to offline network connection, queue offline transaction
+        if (errorMsg.toLowerCase().includes('network') || errorMsg.toLowerCase().includes('connection failed')) {
+          const offlineRef = `OFF-${Math.floor(100000 + Math.random() * 900000)}`;
+          await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), offlineRef);
+
+          // Deduct from local user state optimistically
+          const currentBal = parseFloat(user.balance || 0);
+          const newBal = Math.max(0, currentBal - cleanedAmount);
+          await updateUser({
+            ...user,
+            balance: newBal,
+          });
+
+          router.replace({
+            pathname: '/transaction-result',
+            params: {
+              status: 'success',
+              receiverUsername: cleanedReceiver,
+              amount: cleanedAmount.toString(),
+              referenceNo: offlineRef,
+              dateTime: `${new Date().toLocaleString()} (Offline Queued)`,
+              type,
+              billerName,
+              billerAccountNo,
+              mobileNumber,
+              operator,
+              merchantName,
+            },
+          });
+          return;
+        }
+
+        // Standard FAILURE mappings
+        let mappedStatus = 'transfer_failed';
         if (errorMsg.toLowerCase().includes('insufficient') || errorMsg.toLowerCase().includes('balance')) {
           mappedStatus = 'insufficient_balance';
         } else if (errorMsg.toLowerCase().includes('receiver') || errorMsg.toLowerCase().includes('not found')) {

@@ -37,6 +37,7 @@ export default function SendMoney() {
   // Receiver Check States
   const [isValidating, setIsValidating] = useState(false);
   const [verifiedReceiver, setVerifiedReceiver] = useState<string | null>(null);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   // Focus States
@@ -65,6 +66,7 @@ export default function SendMoney() {
     const allowed = text.replace(/[^a-zA-Z0-9_]/g, '');
     setReceiverInput(allowed);
     setVerifiedReceiver(null);
+    setIsOfflineMode(false);
     setValidationError(null);
 
     if (checkTimerRef.current) {
@@ -94,6 +96,15 @@ export default function SendMoney() {
 
       if (result.success) {
         setVerifiedReceiver(`@${cleaned}`);
+        setIsOfflineMode(false);
+      } else if (result.message && result.message.toLowerCase().includes('network')) {
+        // Optimistic Offline Mode: Allow valid alphanumeric usernames when offline
+        if (cleaned.length >= 3) {
+          setVerifiedReceiver(`@${cleaned}`);
+          setIsOfflineMode(true);
+        } else {
+          setValidationError(language === 'en' ? 'Username must be at least 3 characters in offline mode.' : 'অফলাইন মোডে ব্যবহারকারীর নাম কমপক্ষে ৩ অক্ষরের হতে হবে।');
+        }
       } else {
         setValidationError(result.message || t.receiverNotFoundMsg);
       }
@@ -217,8 +228,12 @@ export default function SendMoney() {
               )}
               {verifiedReceiver && (
                 <View style={styles.feedbackRow}>
-                  <Ionicons name="checkmark-circle" size={16} color={theme.success} />
-                  <Text style={[styles.feedbackSuccess, { color: theme.success }]}>{t.receiverVerifiedMsg}: {verifiedReceiver}</Text>
+                  <Ionicons name={isOfflineMode ? "cloud-offline-outline" : "checkmark-circle"} size={16} color={isOfflineMode ? theme.primary : theme.success} />
+                  <Text style={[styles.feedbackSuccess, { color: isOfflineMode ? theme.primary : theme.success }]}>
+                    {isOfflineMode 
+                      ? (language === 'en' ? `Offline: ${verifiedReceiver} (Will sync on reconnect)` : `অফলাইন: ${verifiedReceiver} (ইন্টারনেট পেলে সিঙ্ক হবে)`)
+                      : `${t.receiverVerifiedMsg}: ${verifiedReceiver}`}
+                  </Text>
                 </View>
               )}
               {validationError && (

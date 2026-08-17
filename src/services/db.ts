@@ -56,6 +56,17 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
             created_at_epoch INTEGER,
             raw_json TEXT
           );
+          CREATE TABLE IF NOT EXISTS pending_offline_transactions (
+            id TEXT PRIMARY KEY,
+            username TEXT,
+            receiver TEXT,
+            amount REAL,
+            type TEXT,
+            created_at TEXT,
+            created_at_epoch INTEGER,
+            status TEXT,
+            raw_json TEXT
+          );
         `);
 
         // Schema migrations for existing tables
@@ -347,8 +358,63 @@ export async function clearUserCache(username: string): Promise<void> {
       await db.runAsync('DELETE FROM cached_user WHERE username = ?', [username]);
       await db.runAsync('DELETE FROM cached_transactions WHERE username = ?', [username]);
       await db.runAsync('DELETE FROM cached_notifications WHERE username = ?', [username]);
+      await db.runAsync('DELETE FROM pending_offline_transactions WHERE username = ?', [username]);
     });
   } catch (error: any) {
     console.warn('Failed to clear user cache:', error);
+  }
+}
+
+/**
+ * Queue an offline transaction in SQLite to be settled once internet connectivity is restored.
+ */
+export async function savePendingOfflineTransaction(
+  username: string,
+  receiver: string,
+  amount: number,
+  type: string,
+  reference: string
+): Promise<void> {
+  try {
+    const db = await getDb();
+    const createdAt = new Date().toISOString();
+    const createdAtEpoch = Date.now();
+    const payload = { id: reference, username, receiver, amount, type, reference, createdAt };
+
+    await db.runAsync(
+      `INSERT OR REPLACE INTO pending_offline_transactions (id, username, receiver, amount, type, created_at, created_at_epoch, status, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [reference, username, receiver, amount, type, createdAt, createdAtEpoch, 'pending', JSON.stringify(payload)]
+    );
+  } catch (error) {
+    console.warn('Failed to save pending offline transaction:', error);
+  }
+}
+
+/**
+ * Retrieve all pending offline transactions for a user.
+ */
+export async function getPendingOfflineTransactions(username: string): Promise<any[]> {
+  try {
+    const db = await getDb();
+    const rows = await db.getAllAsync<{ raw_json: string }>(
+      'SELECT raw_json FROM pending_offline_transactions WHERE username = ? ORDER BY created_at_epoch ASC',
+      [username]
+    );
+    return rows.map((r) => JSON.parse(r.raw_json));
+  } catch (error) {
+    console.warn('Failed to retrieve pending offline transactions:', error);
+    return [];
+  }
+}
+
+/**
+ * Remove a resolved/settled offline transaction from the queue.
+ */
+export async function removePendingOfflineTransaction(id: string): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.runAsync('DELETE FROM pending_offline_transactions WHERE id = ?', [id]);
+  } catch (error) {
+    console.warn('Failed to delete pending offline transaction:', error);
   }
 }
