@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   StatusBar,
   ScrollView,
+  InteractionManager,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -157,7 +158,12 @@ export default function QuickUnlock() {
 
       if (result.success) {
         setStep('unlocked');
-        unlock();
+        InteractionManager.runAfterInteractions(() => {
+          setTimeout(() => {
+            if (!isMounted.current) return;
+            unlock();
+          }, 300);
+        });
       } else {
         if (result.error !== 'user_cancel' && result.error !== 'system_cancel') {
           setBiometricError(result.error || (language === 'en' ? 'Biometric scan failed. Tap to try again.' : 'বায়োমেট্রিক মেলেনি, পুনরায় চেষ্টা করুন।'));
