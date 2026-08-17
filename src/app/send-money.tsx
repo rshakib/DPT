@@ -21,7 +21,6 @@ import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
-import * as db from '../services/db';
 
 export default function SendMoney() {
   const router = useRouter();
@@ -50,26 +49,9 @@ export default function SendMoney() {
   const receiverRef = useRef<TextInput>(null);
   const amountRef = useRef<TextInput>(null);
 
-  // Real Limits Data from user session state & SQLite today's transactions
+  // User Available Balance
   const userData = user?.user || user;
-  const DAILY_LIMIT = parseFloat(userData?.daily_limit || userData?.dailyLimit || 5000);
-  const [spentToday, setSpentToday] = useState<number>(() => {
-    return parseFloat(userData?.today_spent || userData?.todaySpent || 0);
-  });
-
-  const loadTodaySpent = async () => {
-    if (user?.username) {
-      const computed = await db.getTodaySpent(user.username);
-      setSpentToday(computed);
-    }
-  };
-
-  useEffect(() => {
-    loadTodaySpent();
-  }, [user?.username, user?.balance]);
-
-  const ALREADY_SPENT = spentToday;
-  const REMAINING_LIMIT = Math.max(0, DAILY_LIMIT - ALREADY_SPENT);
+  const AVAILABLE_BALANCE = parseFloat(userData?.balance || 0);
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -132,7 +114,7 @@ export default function SendMoney() {
 
   // Parsed calculations
   const parsedAmount = parseFloat(amount) || 0;
-  const isAmountValid = parsedAmount > 0 && parsedAmount <= REMAINING_LIMIT;
+  const isAmountValid = parsedAmount > 0 && parsedAmount <= AVAILABLE_BALANCE;
 
   // Final Form Validation
   const isFormValid =
@@ -278,11 +260,11 @@ export default function SendMoney() {
               </Pressable>
 
               {/* Amount Warnings */}
-              {amount.length > 0 && parsedAmount > REMAINING_LIMIT && (
+              {amount.length > 0 && parsedAmount > AVAILABLE_BALANCE && (
                 <View style={styles.feedbackRow}>
                   <Ionicons name="alert-circle" size={16} color={theme.error} />
                   <Text style={[styles.feedbackError, { color: theme.error }]}>
-                    {t.amountExceedsLimit} ৳{REMAINING_LIMIT.toLocaleString()}
+                    {language === 'en' ? 'Amount exceeds available balance' : 'পরিমাণ উপলব্ধ ব্যালেন্সের চেয়ে বেশি'} (৳{AVAILABLE_BALANCE.toLocaleString('en-US', { minimumFractionDigits: 2 })})
                   </Text>
                 </View>
               )}
@@ -292,32 +274,11 @@ export default function SendMoney() {
                   <Text style={[styles.feedbackError, { color: theme.error }]}>{t.checkCredentialsRetry}</Text>
                 </View>
               )}
-              {(!amount || (parsedAmount > 0 && parsedAmount <= REMAINING_LIMIT)) && (
-                <Text style={[styles.helpText, { color: theme.textSecondary }]}>৳10 - ৳{REMAINING_LIMIT.toLocaleString()}</Text>
-              )}
-            </View>
-
-            {/* Daily limit usage bar */}
-            <View style={[styles.limitCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-              <View style={styles.limitHeaderRow}>
-                <Text style={[styles.limitTitle, { color: theme.text }]}>Daily Limit Usage</Text>
-                <Text style={[styles.limitRemaining, { color: theme.primary }]}>
-                  ৳{REMAINING_LIMIT.toLocaleString()} {t.remainingLabel.toLowerCase()}
+              {(!amount || (parsedAmount > 0 && parsedAmount <= AVAILABLE_BALANCE)) && (
+                <Text style={[styles.helpText, { color: theme.textSecondary }]}>
+                  {t.availableBalance || 'Available Balance'}: ৳{AVAILABLE_BALANCE.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </Text>
-              </View>
-              {/* Progress track */}
-              <View style={[styles.limitTrack, { backgroundColor: isDarkMode ? '#333' : '#EBE8FF' }]}>
-                <View
-                  style={[
-                    styles.limitFill,
-                    { width: `${(ALREADY_SPENT / DAILY_LIMIT) * 100}%`, backgroundColor: theme.primary },
-                  ]}
-                />
-              </View>
-              <View style={styles.limitFooterRow}>
-                <Text style={styles.limitLabel}>{t.spentTodayLabel}: ৳{ALREADY_SPENT.toLocaleString()}</Text>
-                <Text style={styles.limitLabel}>{t.dailyLimitLabel}: ৳{DAILY_LIMIT.toLocaleString()}</Text>
-              </View>
+              )}
             </View>
 
           </View>
