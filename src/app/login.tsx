@@ -135,9 +135,9 @@ export default function Login() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Top Big Centered Logo & Punchline */}
+          {/* Top Hero Centered Logo & Punchline */}
           <View style={styles.logoContainer}>
-            <LogoMark size={200} />
+            <LogoMark size={280} />
           </View>
           <Text style={[styles.brandSlogan, { color: theme.textSecondary }]}>
             Digital Pocket Transaction
