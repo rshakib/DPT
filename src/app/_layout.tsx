@@ -28,7 +28,9 @@ function RootLayoutContent() {
       firstSegment === 'quick-unlock' ||
       firstSegment === 'index' ||
       firstSegment === 'create-password' ||
-      firstSegment === 'officer-verify';
+      firstSegment === 'officer-verify' ||
+      firstSegment === 'enter-name' ||
+      firstSegment === 'biometric-enrollment';
 
     const timer = setTimeout(() => {
       if (isAuthenticated) {
@@ -69,8 +71,9 @@ function RootLayoutContent() {
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="officer-verify" />
-        <Stack.Screen name="biometric-enrollment" />
+        <Stack.Screen name="enter-name" />
         <Stack.Screen name="create-password" />
+        <Stack.Screen name="biometric-enrollment" />
         <Stack.Screen name="activation-success" />
         <Stack.Screen name="quick-unlock" />
         <Stack.Screen name="dashboard" />

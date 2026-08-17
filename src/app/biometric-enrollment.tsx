@@ -19,6 +19,10 @@ import { Header } from '../components/Header';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
+import { useAuth } from '../context/AuthContext';
+import { useAppLock } from '../context/AppLockContext';
+import * as api from '../services/api';
+import { saveLocalPinHash } from '../utils/security';
 
 const { width } = Dimensions.get('window');
 
@@ -29,10 +33,12 @@ export default function BiometricEnrollment() {
   const { theme, isDarkMode } = useAppTheme();
   const { language } = useLanguage();
   const t = translations[language];
-  
+  const { login } = useAuth();
+  const { unlock } = useAppLock();
+
   // Retrieve passed parameters from previous screen
   const params = useLocalSearchParams();
-  const { nid = '', activationCode = '', username = '' } = params;
+  const { nid = '', activationCode = '', username = '', password = '', fullName = '' } = params;
 
   // Biometrics State
   const [authStatus, setAuthStatus] = useState<AuthStatus>('idle');
@@ -117,20 +123,60 @@ export default function BiometricEnrollment() {
     }
   };
 
-  const navigateToNextScreen = () => {
-    router.push({
-      pathname: '/create-password',
-      params: {
-        nid,
-        activationCode,
-        username,
-        bp: '123456',
-      },
-    });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const navigateToNextScreen = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+
+    try {
+      const normalizedUsername = String(username).toLowerCase().trim();
+      const pin = String(password || '');
+
+      if (pin.length >= 8) {
+        const result = await api.register(
+          normalizedUsername,
+          pin,
+          String(nid),
+          String(activationCode)
+        );
+
+        if (result.success) {
+          await saveLocalPinHash(normalizedUsername, pin);
+          const loginRes = await login(normalizedUsername, pin);
+          if (loginRes.success) {
+            unlock();
+          }
+          router.push({
+            pathname: '/activation-success',
+            params: {
+              nid: String(nid),
+              activationCode: String(activationCode),
+              username: normalizedUsername,
+              fullName: String(fullName),
+            },
+          });
+          return;
+        } else {
+          setErrorMessage(result.message || 'Registration failed.');
+          setAuthStatus('failed');
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      router.push({
+        pathname: '/activation-success',
+        params: { nid: String(nid), activationCode: String(activationCode), username: String(username) },
+      });
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Registration error');
+      setAuthStatus('failed');
+      setIsSubmitting(false);
+    }
   };
 
   const handleContinueFallback = () => {
-    // Allows proceeding manually in simulator testing if biometrics fail/absent
     navigateToNextScreen();
   };
 
