@@ -8,7 +8,7 @@ import {
   Dimensions,
   StatusBar,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -71,7 +71,15 @@ export default function TransactionResult() {
     }, 2000);
   };
 
+  const navigation = useNavigation();
+
   const handleBackToHome = () => {
+    try {
+      const state = navigation.getState();
+      const currentRoutes = state?.routes?.map((r: any) => r.name) || [];
+      console.log('[TX NAV BEFORE BACK TO HOME] Stack routes:', currentRoutes);
+    } catch (e) {}
+
     if (router.canDismiss()) {
       router.dismissAll();
     }
@@ -79,6 +87,12 @@ export default function TransactionResult() {
   };
 
   const handleViewHistory = () => {
+    try {
+      const state = navigation.getState();
+      const currentRoutes = state?.routes?.map((r: any) => r.name) || [];
+      console.log('[TX NAV BEFORE VIEW HISTORY] Stack routes:', currentRoutes);
+    } catch (e) {}
+
     if (router.canDismiss()) {
       router.dismissAll();
     }

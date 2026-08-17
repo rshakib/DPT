@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useNavigation } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -129,9 +129,17 @@ export default function Dashboard() {
     }
   };
 
+  const navigation = useNavigation();
+
   // Trigger data fetch and subscribe to sync updates on focus
   useFocusEffect(
     useCallback(() => {
+      try {
+        const state = navigation.getState();
+        const currentRoutes = state?.routes?.map((r: any) => r.name) || [];
+        console.log('[DASHBOARD MOUNT/FOCUS] Active route stack:', currentRoutes);
+      } catch (e) {}
+
       fetchDashboardData();
 
       const unsubscribe = syncService.subscribe(async () => {
