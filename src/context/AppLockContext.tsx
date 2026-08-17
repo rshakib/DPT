@@ -11,17 +11,10 @@ interface AppLockContextType {
 const AppLockContext = createContext<AppLockContextType | undefined>(undefined);
 
 export function AppLockProvider({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isInitializing } = useAuth();
-  const [isLocked, setIsLocked] = useState(false);
+  const { isAuthenticated } = useAuth();
+  const [isLocked, setIsLocked] = useState(true);
   const appState = useRef(AppState.currentState);
   const lastBackgroundTime = useRef<number | null>(null);
-
-  // Lock on initial load if we have a valid session restored (and we finished initializing)
-  useEffect(() => {
-    if (!isInitializing && isAuthenticated) {
-      setIsLocked(true);
-    }
-  }, [isInitializing, isAuthenticated]);
 
   useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {

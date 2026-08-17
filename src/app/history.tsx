@@ -34,6 +34,9 @@ export default function History() {
 
   // Tab selections: 'all' | 'success' | 'failed'
   const [activeTab, setActiveTab] = useState<'all' | 'success' | 'failed'>('all');
+  // Date filter selections: 'all' | 'today' | 'yesterday' | '7days' | '30days'
+  type DateFilter = 'all' | 'today' | 'yesterday' | '7days' | '30days';
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [rawTransactions, setRawTransactions] = useState<any[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -115,20 +118,54 @@ export default function History() {
     );
   };
 
+  // Helper to filter transactions by date range
+  const isWithinDateFilter = (filter: DateFilter, timestampMs?: number): boolean => {
+    if (filter === 'all') return true;
+    if (!timestampMs) return false;
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const endOfToday = startOfToday + 24 * 60 * 60 * 1000 - 1;
+
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+    const endOfYesterday = startOfToday - 1;
+
+    if (filter === 'today') {
+      return timestampMs >= startOfToday && timestampMs <= endOfToday;
+    }
+    if (filter === 'yesterday') {
+      return timestampMs >= startOfYesterday && timestampMs <= endOfYesterday;
+    }
+    if (filter === '7days') {
+      const sevenDaysAgo = startOfToday - 6 * 24 * 60 * 60 * 1000;
+      return timestampMs >= sevenDaysAgo;
+    }
+    if (filter === '30days') {
+      const thirtyDaysAgo = startOfToday - 29 * 24 * 60 * 60 * 1000;
+      return timestampMs >= thirtyDaysAgo;
+    }
+    return true;
+  };
+
   // Process and map raw API transactions
   const transactions = rawTransactions.map((tx: any) =>
     mapApiTransaction(tx, user?.username || '', t, language, theme)
   );
 
-  // Filter transactions based on selected status tab
+  // Filter transactions based on selected status tab and date filter
   const getFilteredTransactions = () => {
+    let list = transactions;
     if (activeTab === 'success') {
-      return transactions.filter((tx) => tx.statusEnglish === 'Successful');
+      list = list.filter((tx) => tx.statusEnglish === 'Successful');
+    } else if (activeTab === 'failed') {
+      list = list.filter((tx) => tx.statusEnglish === 'Failed');
     }
-    if (activeTab === 'failed') {
-      return transactions.filter((tx) => tx.statusEnglish === 'Failed');
+
+    if (dateFilter !== 'all') {
+      list = list.filter((tx) => isWithinDateFilter(dateFilter, tx.timestampMs));
     }
-    return transactions;
+
+    return list;
   };
 
   const handleCardPress = (tx: MappedTransaction) => {
@@ -145,6 +182,14 @@ export default function History() {
   };
 
   const filteredTx = getFilteredTransactions();
+
+  const dateFilterOptions: { key: DateFilter; label: string }[] = [
+    { key: 'all', label: t.filterAllTime || 'All Time' },
+    { key: 'today', label: t.filterToday || 'Today' },
+    { key: 'yesterday', label: t.filterYesterday || 'Yesterday' },
+    { key: '7days', label: t.filter7Days || 'Last 7 Days' },
+    { key: '30days', label: t.filter30Days || 'Last 30 Days' },
+  ];
 
   console.log('[RENDER] History rendering: isLoading =', isLoading, ', rawTransactions.length =', rawTransactions.length);
 
@@ -224,6 +269,53 @@ export default function History() {
             {t.failedTab || 'Failed'}
           </Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Day-Wise Horizontal Filter Pills */}
+      <View style={styles.dateFilterContainer}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.dateFilterScroll}
+        >
+          {dateFilterOptions.map((opt) => {
+            const isSelected = dateFilter === opt.key;
+            return (
+              <TouchableOpacity
+                key={opt.key}
+                onPress={() => setDateFilter(opt.key)}
+                activeOpacity={0.7}
+                style={[
+                  styles.datePill,
+                  {
+                    backgroundColor: isSelected
+                      ? theme.primary
+                      : isDarkMode
+                      ? '#1E1E1E'
+                      : '#F0EFFF',
+                    borderColor: isSelected ? theme.primary : theme.border,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.datePillText,
+                    {
+                      color: isSelected
+                        ? '#FFFFFF'
+                        : isDarkMode
+                        ? '#A0A0A0'
+                        : theme.textSecondary,
+                      fontWeight: isSelected ? '700' : '500',
+                    },
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {/* Main List Area */}
@@ -358,7 +450,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1.5,
     marginHorizontal: Spacing.xxl,
-    marginVertical: Spacing.md,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.xs,
     padding: 3,
   },
   tabItem: {
@@ -377,6 +470,26 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  dateFilterContainer: {
+    marginVertical: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  dateFilterScroll: {
+    paddingHorizontal: Spacing.xxl,
+    gap: 8,
+    alignItems: 'center',
+  },
+  datePill: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  datePillText: {
+    fontSize: 12,
   },
   centerContainer: {
     flex: 1,

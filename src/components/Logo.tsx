@@ -7,12 +7,12 @@ interface LogoProps {
 }
 
 /**
- * Official DPT Brand Logo from assets/DPT.png
+ * Official DPT Brand Logo from assets/dpt new.png
  */
 export function LogoMark({ size = 56 }: LogoProps) {
   return (
     <Image
-      source={require('../../assets/DPT.png')}
+      source={require('../../assets/dpt new.png')}
       style={{ width: size, height: size }}
       resizeMode="contain"
     />

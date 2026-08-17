@@ -98,6 +98,7 @@ export default function QRAmount() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          removeClippedSubviews={false}
         >
           {/* Merchant Header Details Card */}
           <View style={[styles.merchantCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>

@@ -1,8 +1,12 @@
+import { enableScreens } from 'react-native-screens';
+
+enableScreens(false);
+
 import React, { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { View, ActivityIndicator, StyleSheet, InteractionManager } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { ThemeProvider, useAppTheme } from '../context/ThemeContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { AuthProvider, useAuth } from '../context/AuthContext';
@@ -19,40 +23,41 @@ function RootLayoutContent() {
     if (isInitializing) return;
 
     const firstSegment = (segments[0] as string) || '';
-    const inAuthGroup = firstSegment === 'login' || firstSegment === 'quick-unlock' || firstSegment === 'index' || firstSegment === 'create-password' || firstSegment === 'officer-verify';
+    const inAuthGroup =
+      firstSegment === 'login' ||
+      firstSegment === 'quick-unlock' ||
+      firstSegment === 'index' ||
+      firstSegment === 'create-password' ||
+      firstSegment === 'officer-verify';
 
-    if (isAuthenticated) {
-      if (isLocked && firstSegment !== 'quick-unlock') {
-        InteractionManager.runAfterInteractions(() => {
+    const timer = setTimeout(() => {
+      if (isAuthenticated) {
+        if (isLocked && firstSegment !== 'quick-unlock') {
           router.replace('/quick-unlock');
-        });
-      } else if (!isLocked && inAuthGroup) {
-        InteractionManager.runAfterInteractions(() => {
+        } else if (!isLocked && inAuthGroup) {
           router.replace('/dashboard');
-        });
-      }
-    } else {
-      if (!inAuthGroup && firstSegment !== '') {
-        InteractionManager.runAfterInteractions(() => {
+        }
+      } else {
+        if (!inAuthGroup && firstSegment !== '') {
           router.replace('/login');
-        });
+        }
       }
-    }
+    }, 50);
+
+    return () => clearTimeout(timer);
   }, [isAuthenticated, isInitializing, isLocked, segments]);
 
   if (isInitializing) {
     return (
-      <SafeAreaProvider>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.background }}>
         <StatusBar style={isDarkMode ? 'light' : 'dark'} />
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.background }}>
-          <ActivityIndicator size="large" color={theme.primary} />
-        </View>
-      </SafeAreaProvider>
+        <ActivityIndicator size="large" color={theme.primary} />
+      </View>
     );
   }
 
   return (
-    <SafeAreaProvider>
+    <>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
@@ -91,7 +96,7 @@ function RootLayoutContent() {
         <Stack.Screen name="transaction-processing" />
         <Stack.Screen name="transaction-result" />
       </Stack>
-    </SafeAreaProvider>
+    </>
   );
 }
 
@@ -110,15 +115,17 @@ Sentry.init({
 
 function RootLayout() {
   return (
-    <AuthProvider>
-      <AppLockProvider>
-        <ThemeProvider>
-          <LanguageProvider>
-            <RootLayoutContent />
-          </LanguageProvider>
-        </ThemeProvider>
-      </AppLockProvider>
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <AppLockProvider>
+          <ThemeProvider>
+            <LanguageProvider>
+              <RootLayoutContent />
+            </LanguageProvider>
+          </ThemeProvider>
+        </AppLockProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
 

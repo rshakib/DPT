@@ -244,6 +244,7 @@ export default function BillPayment() {
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
+            removeClippedSubviews={false}
           >
             {pendingBills.map((bill) => (
               <View key={bill.id} style={[styles.billCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
@@ -284,6 +285,7 @@ export default function BillPayment() {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          removeClippedSubviews={false}
         >
           {MOCK_PAID_BILLS.map((bill) => (
             <View key={bill.id} style={[styles.billCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>

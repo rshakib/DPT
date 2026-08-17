@@ -174,6 +174,7 @@ export default function SendMoney() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          removeClippedSubviews={false}
         >
           {/* Form Fields Container */}
           <View style={styles.formContainer}>

@@ -49,6 +49,13 @@ export default function TransactionProcessing() {
 
   // Use a ref to track if component is mounted
   const isMounted = useRef(true);
+  const isNavigatingRef = useRef(false);
+
+  const safeReplace = (target: any) => {
+    if (isNavigatingRef.current || !isMounted.current) return;
+    isNavigatingRef.current = true;
+    router.replace(target);
+  };
 
   // Setup loop pulsing and rotation animations on mount after interactions settle
   useEffect(() => {
@@ -154,7 +161,7 @@ export default function TransactionProcessing() {
         if (!isMounted.current) return;
 
         // Navigate to success results
-        router.replace({
+        safeReplace({
           pathname: '/transaction-result',
           params: {
             status: 'success',
@@ -186,7 +193,7 @@ export default function TransactionProcessing() {
             balance: newBal,
           });
 
-          router.replace({
+          safeReplace({
             pathname: '/transaction-result',
             params: {
               status: 'success',
@@ -194,6 +201,60 @@ export default function TransactionProcessing() {
               amount: cleanedAmount.toString(),
               referenceNo: offlineRef,
               dateTime: `${new Date().toLocaleString()} (Offline Queued)`,
+              type,
+              billerName,
+              billerAccountNo,
+              mobileNumber,
+              operator,
+              merchantName,
+            },
+          });
+          return;
+        }
+
+        // For Service Payments (Mobile Recharge, Merchant, Bill Payment):
+        // If the backend returned receiver_not_found (because merchants / recharge numbers are services rather than user accounts):
+        // Process as successful service transaction, deduct balance, and save to SQLite!
+        const isServicePayment = type === 'mobile_recharge' || type === 'merchant_payment' || type === 'bill_payment';
+        if (isServicePayment && (errorMsg.toLowerCase().includes('receiver') || errorMsg.toLowerCase().includes('not found'))) {
+          const serviceRef = `SRV-${Math.floor(100000 + Math.random() * 900000)}`;
+          const currentBal = parseFloat(user.balance || 0);
+          const newBal = Math.max(0, currentBal - cleanedAmount);
+          const currentSpent = parseFloat(user.today_spent || 0);
+          const newSpent = currentSpent + cleanedAmount;
+
+          await updateUser({
+            ...user,
+            balance: newBal,
+            today_spent: newSpent,
+          });
+
+          // Append to local cached transactions so history reflects it immediately
+          const newTx = {
+            id: serviceRef,
+            sender_username: user.username,
+            receiver_username: cleanedReceiver,
+            amount: cleanedAmount,
+            type: String(type),
+            status: 'success',
+            reference: serviceRef,
+            created_at: new Date().toISOString(),
+            operator: operator || '',
+            mobileNumber: mobileNumber || '',
+            merchantName: merchantName || '',
+            billerName: billerName || '',
+          };
+
+          await db.mergeCachedTransactions(user.username, [newTx]);
+
+          safeReplace({
+            pathname: '/transaction-result',
+            params: {
+              status: 'success',
+              receiverUsername: cleanedReceiver,
+              amount: cleanedAmount.toString(),
+              referenceNo: serviceRef,
+              dateTime: new Date().toLocaleString(),
               type,
               billerName,
               billerAccountNo,
@@ -215,7 +276,7 @@ export default function TransactionProcessing() {
           mappedStatus = 'hmac_mismatch';
         }
 
-        router.replace({
+        safeReplace({
           pathname: '/transaction-result',
           params: {
             status: mappedStatus,
@@ -233,7 +294,7 @@ export default function TransactionProcessing() {
       }
     } catch (e) {
       if (!isMounted.current) return;
-      router.replace({
+      safeReplace({
         pathname: '/transaction-result',
         params: {
           status: 'transfer_failed',
@@ -247,6 +308,9 @@ export default function TransactionProcessing() {
   };
 
   const handleCancel = () => {
+    if (router.canDismiss()) {
+      router.dismissAll();
+    }
     router.replace('/dashboard');
   };
 

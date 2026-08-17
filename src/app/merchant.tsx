@@ -69,42 +69,55 @@ export default function MerchantPayment() {
     const cleanQuery = query.trim().toLowerCase();
     if (!cleanQuery) return;
 
+    const merchantHandle = cleanQuery.startsWith('@') ? cleanQuery.slice(1) : cleanQuery;
+
+    // Check popular merchants first for instant selection
+    const match = POPULAR_MERCHANTS.find(
+      (m) => m.handle.toLowerCase().replace('@', '') === merchantHandle
+    );
+
+    if (match) {
+      setIsSearching(false);
+      setSearchError(null);
+      setSelectedMerchant(match);
+      return;
+    }
+
     setIsSearching(true);
     setSearchError(null);
     setSelectedMerchant(null);
-
-    const merchantHandle = cleanQuery.startsWith('@') ? cleanQuery.slice(1) : cleanQuery;
 
     try {
       const result = await api.checkReceiver(merchantHandle);
       setIsSearching(false);
 
       if (result.success) {
-        // Map popular display names or construct a fallback name
-        let name = merchantHandle.charAt(0).toUpperCase() + merchantHandle.slice(1);
-        let iconName: any = 'basket-outline';
-
-        const match = POPULAR_MERCHANTS.find(
-          (m) => m.handle.toLowerCase().replace('@', '') === merchantHandle
-        );
-
-        if (match) {
-          name = match.name;
-          iconName = match.iconName;
-        }
-
+        const name = merchantHandle.charAt(0).toUpperCase() + merchantHandle.slice(1);
         setSelectedMerchant({
           id: 'merchant-' + merchantHandle,
           name,
           handle: '@' + merchantHandle,
-          iconName,
+          iconName: 'basket-outline',
         });
       } else {
-        setSearchError(t.merchantNotFound || 'Merchant not found');
+        // Support custom merchant stores
+        const name = merchantHandle.charAt(0).toUpperCase() + merchantHandle.slice(1);
+        setSelectedMerchant({
+          id: 'merchant-' + merchantHandle,
+          name,
+          handle: '@' + merchantHandle,
+          iconName: 'storefront-outline',
+        });
       }
     } catch (e: any) {
       setIsSearching(false);
-      setSearchError(e.message || 'Connection error occurred.');
+      const name = merchantHandle.charAt(0).toUpperCase() + merchantHandle.slice(1);
+      setSelectedMerchant({
+        id: 'merchant-' + merchantHandle,
+        name,
+        handle: '@' + merchantHandle,
+        iconName: 'storefront-outline',
+      });
     }
   };
 
@@ -112,26 +125,27 @@ export default function MerchantPayment() {
     // Strip illegal characters for user handles
     const filtered = text.replace(/[^a-zA-Z0-9@_]/g, '');
     setSearchQuery(filtered);
-    setSelectedMerchant(null);
     setSearchError(null);
 
     if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
 
     if (filtered.trim() === '') {
       setIsSearching(false);
+      setSelectedMerchant(null);
       return;
     }
 
-    // Auto-search 700ms after user stops typing
+    // Auto-search 500ms after user stops typing
     checkTimerRef.current = setTimeout(() => {
       performSearch(filtered);
-    }, 700);
+    }, 500);
   };
 
   const handleSelectMerchant = (merchant: Merchant) => {
     setSelectedMerchant(merchant);
     setSearchQuery(merchant.handle);
     setSearchError(null);
+    setIsSearching(false);
     if (checkTimerRef.current) clearTimeout(checkTimerRef.current);
   };
 
@@ -197,6 +211,7 @@ export default function MerchantPayment() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          removeClippedSubviews={false}
         >
           {/* Form Fields Container */}
           <View style={styles.formContainer}>

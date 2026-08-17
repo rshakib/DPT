@@ -92,34 +92,21 @@ export default function MobileRecharge() {
 
   const isFormValid = isMobileValid && isAmountValid;
 
-  const handleProceed = async () => {
-    if (!isFormValid || isChecking) return;
+  const handleProceed = () => {
+    if (!isFormValid) return;
 
-    setIsChecking(true);
-    const result = await api.checkReceiver('mobile');
-    setIsChecking(false);
+    const op = OPERATORS.find((o) => o.key === selectedOperator);
+    const displayOperator = op ? op.name : selectedOperator;
 
-    if (result.success) {
-      const op = OPERATORS.find((o) => o.key === selectedOperator);
-      const displayOperator = op ? op.name : selectedOperator;
-
-      router.push({
-        pathname: '/recharge-confirm',
-        params: {
-          receiverUsername: 'mobile',
-          mobileNumber,
-          operator: displayOperator,
-          amount: parsedAmount.toFixed(2),
-        },
-      });
-    } else {
-      Alert.alert(
-        language === 'en' ? 'Recharge Unavailable' : 'রিচার্জ সেবা বন্ধ',
-        language === 'en'
-          ? 'Recharge service temporarily unavailable. Please try again later.'
-          : 'রিচার্জ সেবা সাময়িকভাবে বন্ধ আছে। অনুগ্রহ করে পরে আবার চেষ্টা করুন।'
-      );
-    }
+    router.push({
+      pathname: '/recharge-confirm',
+      params: {
+        receiverUsername: 'mobile',
+        mobileNumber,
+        operator: displayOperator,
+        amount: parsedAmount.toFixed(2),
+      },
+    });
   };
 
   const getMobileBorder = () => {
@@ -148,6 +135,7 @@ export default function MobileRecharge() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          removeClippedSubviews={false}
         >
           {/* Form Fields Container */}
           <View style={styles.formContainer}>

@@ -8,7 +8,6 @@ import {
   Alert,
   LayoutAnimation,
   Platform,
-  UIManager,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,14 +17,6 @@ import { Header } from '../components/Header';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
-
-// Enable layout animations for Android
-if (
-  Platform.OS === 'android' &&
-  UIManager.setLayoutAnimationEnabledExperimental
-) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 type SectionKey = 'email' | 'qr' | 'nfc' | 'card';
 

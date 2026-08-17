@@ -4,7 +4,9 @@
     "slug": "dpt-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon"
+    
+    : "./assets/images/icon.png",
     "scheme": "dptapp",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -34,6 +36,7 @@
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+    "newArchEnabled": false,
     "plugins": [
       "expo-router",
       [
@@ -64,7 +67,8 @@
           "android": {
             "compileSdkVersion": 36,
             "targetSdkVersion": 35,
-            "buildToolsVersion": "35.0.0"
+            "buildToolsVersion": "35.0.0",
+            "newArchEnabled": false
           }
         }
       ]

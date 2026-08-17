@@ -47,7 +47,9 @@
 ## 2. Complete System Environment & Version Rules
 
 - **Expo SDK Version**: **v57.0.0** (Strictly follow `https://docs.expo.dev/versions/v57.0.0/`)
-- **React Native Entry Point**: `"main": "expo-router/entry"` in `package.json`
+- **React Native Entry Point**: `"main": "index.ts"` in `package.json`
+- **Screen Management & Navigation Stack Lifecycle**: Native screen optimizations in `react-native-screens` are disabled via `enableScreens(false)` in `index.ts`. All transaction flows strictly unwind the navigation stack via `router.dismissAll()` on returning to the root Dashboard to prevent screen stacking leaks and Android `ReactClippingViewManager.addView` view collisions.
+- **View Recycling Fix**: All transaction form and result ScrollViews explicitly specify `removeClippedSubviews={false}` to prevent Android ViewGroup detachment collisions during rapid sequential transactions.
 - **Routing Engine**: Expo Router (File-based routes located strictly in `src/app/`)
 - **TypeScript**: Strict Mode enabled (`tsconfig.json` path alias `@/*` maps to `./src/*`)
 - **Backend API Base URL**: `https://e-pay-fydp.onrender.com`
@@ -70,7 +72,7 @@
     │   ├── login.tsx                        # Account login form (username & password)
     │   ├── quick-unlock.tsx                 # App Unlock lockscreen (2-Step PIN -> Biometric sequence)
     │   ├── dashboard.tsx                    # Main Home Dashboard (Balance Card, Action Grid, Activity)
-    │   ├── history.tsx                      # Transaction History (All/Success/Failed tabs + CSV export)
+    │   ├── history.tsx                      # Transaction History (All/Success/Failed tabs + Day-wise date filtering + CSV export)
     │   ├── notifications.tsx                # Notifications Feed (Read/Unread badge persistence)
     │   ├── profile.tsx                      # User Profile (Limits, Daily spending, Account details)
     │   ├── settings.tsx                     # Settings (Dark Mode toggle, Classic vs Sol Theme picker)
@@ -97,7 +99,7 @@
     │   └── transaction-result.tsx           # Detailed Printable Transaction Receipt
     ├── components/                          # REUSABLE COMPONENTS
     │   ├── Header.tsx                       # Dynamic header bar with back chevron
-    │   ├── Logo.tsx                         # Dynamic SVG Vector Ribbon LogoMark (Theme-aware)
+    │   ├── Logo.tsx                         # Official DPT Brand LogoMark (assets/dpt new.png)
     │   └── TransactionAuthScreen.tsx        # 2-Step PIN -> Biometrics transfer authorization modal
     ├── context/                             # STATE PROVIDERS
     │   ├── AuthContext.tsx                  # Tokens, user state, login, logout, switchAccount

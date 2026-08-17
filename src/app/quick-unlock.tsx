@@ -193,7 +193,7 @@ export default function QuickUnlock() {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: isDarkMode ? '#0E0D2C' : '#FAF9FF' }]}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
 
-      <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false} removeClippedSubviews={false}>
         {/* Header Bar: Language Switcher */}
         <View style={styles.topBar}>
           <View style={styles.languageToggle}>
@@ -212,18 +212,9 @@ export default function QuickUnlock() {
           </View>
         </View>
 
-        {/* Logo & Welcome Back Section */}
+        {/* Logo Section */}
         <View style={styles.logoSection}>
-          <LogoMark size={240} />
-          <Text style={[styles.brandSlogan, { color: theme.textSecondary }]}>
-            Digital Pocket Transaction
-          </Text>
-          <Text style={[styles.welcomeTitle, { color: theme.text }]}>
-            {language === 'en' ? 'Welcome Back' : 'স্বাগতম'}
-          </Text>
-          <Text style={[styles.userBadge, { color: theme.textSecondary }]}>
-            {displayName} {maskedPhone ? `(${maskedPhone})` : ''}
-          </Text>
+          <LogoMark size={160} />
         </View>
 
         {/* Main Authentication Flow Box */}

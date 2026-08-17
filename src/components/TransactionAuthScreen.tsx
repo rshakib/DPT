@@ -100,6 +100,13 @@ export function TransactionAuthScreen({
   }, [pulseAnim]);
 
   const isMounted = useRef(true);
+  const isNavigatingRef = useRef(false);
+
+  const safeAuthorized = () => {
+    if (isNavigatingRef.current) return;
+    isNavigatingRef.current = true;
+    onAuthorized();
+  };
 
   // Check biometric support on mount and attempt authentication
   useEffect(() => {
@@ -270,7 +277,7 @@ export function TransactionAuthScreen({
                     message: 'Executing onAuthorized navigation callback',
                     level: 'info',
                   });
-                  onAuthorized();
+                  safeAuthorized();
                 }, 300);
               });
             } else {
@@ -295,7 +302,7 @@ export function TransactionAuthScreen({
           InteractionManager.runAfterInteractions(() => {
             setTimeout(() => {
               if (isMounted.current) {
-                onAuthorized();
+                safeAuthorized();
               }
             }, 300);
           });

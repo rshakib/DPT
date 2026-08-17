@@ -2,6 +2,7 @@ export interface MappedTransaction {
   id: string;
   title: string;
   time: string;
+  timestampMs?: number;
   amount: string;
   amountVal: number;
   isOutgoing: boolean;
@@ -85,11 +86,13 @@ export function mapApiTransaction(
   }
 
   let formattedTime = tx.created_at || tx.timestamp || 'N/A';
+  let timestampMs: number | undefined = undefined;
   if (formattedTime !== 'N/A') {
     try {
       const cleanStr = String(formattedTime).replace('Z', '+00:00');
       const dt = new Date(cleanStr);
       if (!isNaN(dt.getTime())) {
+        timestampMs = dt.getTime();
         const day = String(dt.getDate()).padStart(2, '0');
         const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const month = monthNames[dt.getMonth()];
@@ -112,6 +115,7 @@ export function mapApiTransaction(
     id: String(tx.id || Math.random()),
     title: displayTitle,
     time: formattedTime,
+    timestampMs,
     amount: `${isOutgoing ? '-' : '+'} ৳${amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
     amountVal,
     isOutgoing,

@@ -67,6 +67,11 @@ export const translations = {
     loadingTransactions: "Loading transactions...",
     exportCsv: "Export CSV",
     exportStarted: "CSV Export started successfully",
+    filterAllTime: "All Time",
+    filterToday: "Today",
+    filterYesterday: "Yesterday",
+    filter7Days: "Last 7 Days",
+    filter30Days: "Last 30 Days",
     
     // Security Center
     securityCenterTitle: "Security Center",
@@ -339,6 +344,11 @@ export const translations = {
     loadingTransactions: "লেনদেন লোড হচ্ছে...",
     exportCsv: "সিএসভি এক্সপোর্ট",
     exportStarted: "সিএসভি এক্সপোর্ট সফলভাবে শুরু হয়েছে",
+    filterAllTime: "সব সময়",
+    filterToday: "আজকে",
+    filterYesterday: "গতকাল",
+    filter7Days: "গত ৭ দিন",
+    filter30Days: "গত ৩০ দিন",
     
     // Security Center
     securityCenterTitle: "নিরাপত্তা কেন্দ্র",

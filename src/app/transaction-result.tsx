@@ -72,11 +72,17 @@ export default function TransactionResult() {
   };
 
   const handleBackToHome = () => {
+    if (router.canDismiss()) {
+      router.dismissAll();
+    }
     router.replace('/dashboard');
   };
 
   const handleViewHistory = () => {
-    router.replace('/history');
+    if (router.canDismiss()) {
+      router.dismissAll();
+    }
+    router.push('/history');
   };
 
   const accentColor = isSuccess ? theme.success : theme.error;
@@ -101,6 +107,7 @@ export default function TransactionResult() {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={false}
       >
         {/* Status Circular Badges */}
         <View style={styles.statusBadgeSection}>

@@ -23,6 +23,7 @@ import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
+import { useAppLock } from '../context/AppLockContext';
 
 const { width } = Dimensions.get('window');
 
@@ -32,6 +33,7 @@ export default function Login() {
   const { language } = useLanguage();
   const t = translations[language];
   const { login } = useAuth();
+  const { unlock } = useAppLock();
 
   // Form States
   const [username, setUsername] = useState('');
@@ -71,6 +73,7 @@ export default function Login() {
 
     setIsLoading(false);
     if (result.success) {
+      unlock();
       router.replace('/dashboard');
     } else {
       setErrorMessage(result.message || null);
