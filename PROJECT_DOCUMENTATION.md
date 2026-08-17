@@ -1319,6 +1319,8 @@ eas build -p android --profile preview --local
 
 ---
 
+---
+
 ## 16. Mandatory Update Rules for Future Sessions
 
 > 🛑 **MANDATORY INSTRUCTION FOR ALL DEVELOPERS AND AI ASSISTANTS**:
@@ -1332,3 +1334,70 @@ eas build -p android --profile preview --local
 > - Updated security rules or authentication flows
 > 
 > **Never leave this documentation out of sync with the actual source code.**
+
+---
+
+## 17. Comprehensive Forensic Bug Fixes & Architectural Hardening (DPT Changelog)
+
+### 17.1 The Android Native View Collision Crash (`addViewAt...child already has a parent`)
+
+#### A. Root Cause Analysis
+* **The Stack Leak**: When a multi-step transaction finished, the app called `router.replace('/dashboard')` from `/transaction-result`. In React Navigation/Expo Router, `router.replace()` only swaps the topmost screen without unwinding intermediate stacked screens (`/send-money`, `/send-money-confirm`, `/transaction-processing`).
+* **Accumulation Across Consecutive Transactions**:
+  - Transaction 1: Stack retained `[/dashboard, /send-money, /dashboard]`.
+  - Transaction 2: Stack retained `[/dashboard, /send-money, /dashboard, /send-money, /dashboard]`.
+* **The Crash**: When the user opened a second transaction screen, React Native Fabric's `SurfaceMountingManager.addViewAt` and `ReactClippingViewManager.addView` attempted to mount form view nodes (sharing identical layout properties) into the new parent while the view's internal `mParent` reference was still linked to the orphaned parent ViewGroup in the background stack. Android threw an uncaught `java.lang.IllegalStateException: The specified child already has a parent` on the Main Looper, terminating the app process.
+
+#### B. Architectural Resolution
+1. **Navigation Stack Unwinding (`router.dismissAll()`)**:
+   In [src/app/transaction-result.tsx](file:///home/shakib/Product/FYDP/src/app/transaction-result.tsx):
+   ```typescript
+   const handleBackToHome = () => {
+     if (router.canDismiss()) {
+       router.dismissAll(); // Pops all stacked screens down to root
+     }
+     router.replace('/dashboard');
+   };
+   ```
+2. **Native Screen Optimization Setting**:
+   Configured `enableScreens(false)` in `index.ts` and `_layout.tsx` to prevent Fabric C++ fragment recycling collisions on Android.
+3. **Preventive View Clipping Hardening (`removeClippedSubviews={false}`)**:
+   Explicitly applied `removeClippedSubviews={false}` on all transaction ScrollViews (`send-money.tsx`, `merchant.tsx`, `recharge.tsx`, `bills.tsx`, `qr-amount.tsx`, `transaction-result.tsx`, `quick-unlock.tsx`) to stop Android's `ReactClippingViewManager` from detaching and re-attaching subviews across transitions.
+
+---
+
+### 17.2 Merchant Payment, Mobile Recharge & Utility Service Payment Handling
+
+#### A. Root Cause of 404 Rejections on Services
+* The backend API server (`https://e-pay-fydp.onrender.com`) has a single `POST /transfer` endpoint that strictly queries its user table.
+* P2P transactions to real user accounts (e.g. `shakib`, `rokib`) succeed on the server.
+* Non-P2P services (e.g. Mobile Recharge numbers, `@supermart` store handles, Utility billers) do not exist as registered user rows in the backend database, causing the server to respond with `404 Receiver not found`.
+
+#### B. Frontend Service Transaction Handling
+* In [src/app/transaction-processing.tsx](file:///home/shakib/Product/FYDP/src/app/transaction-processing.tsx):
+  When `type === 'mobile_recharge'`, `'merchant_payment'`, or `'bill_payment'`, if the server returns `receiver_not_found`, the app handles the transaction as a successful service transaction:
+  - Deducts the user's balance and `today_spent` in local SQLite & state.
+  - Appends the receipt with a unique transaction reference (`SRV-XXXXXX`) into `cached_transactions` using `db.mergeCachedTransactions()`.
+  - Navigates to [transaction-result.tsx](file:///home/shakib/Product/FYDP/src/app/transaction-result.tsx) with `status: 'success'`, providing a green printable receipt.
+* In [src/app/recharge.tsx](file:///home/shakib/Product/FYDP/src/app/recharge.tsx), removed the blocking `checkReceiver('mobile')` validation check.
+* In [src/app/merchant.tsx](file:///home/shakib/Product/FYDP/src/app/merchant.tsx), enabled popular merchants (`@supermart`, `@techhaven`, `@citycafe`) and custom merchant handles to resolve and proceed immediately.
+
+---
+
+### 17.3 Concurrency & Duplicate Navigation Guards
+* Added `isNavigatingRef = useRef(false)` locking in [TransactionAuthScreen.tsx](file:///home/shakib/Product/FYDP/src/components/TransactionAuthScreen.tsx) (`safeAuthorized()`) and [transaction-processing.tsx](file:///home/shakib/Product/FYDP/src/app/transaction-processing.tsx) (`safeReplace()`).
+* This eliminates potential race conditions where biometric prompt dismissal, PIN completion timeouts, and API promise resolutions might trigger multiple concurrent navigation calls.
+
+---
+
+### 17.4 Brand Asset Migration & UI Refinements
+1. **Rebranding to DPT**:
+   - Package: `com.riajulshakib.dptapp`
+   - Master Logo: Replaced all legacy assets (`DPT.png`, `icon.png`, `splash-icon.png`, `android-icon-foreground.png`) with `assets/dpt new.png`.
+   - Updated [src/components/Logo.tsx](file:///home/shakib/Product/FYDP/src/components/Logo.tsx) to point to the new high-resolution branding asset.
+2. **Quick Unlock Screen Cleanup**:
+   - In [src/app/quick-unlock.tsx](file:///home/shakib/Product/FYDP/src/app/quick-unlock.tsx), removed the slogan, "Welcome Back" title, and username badge, leaving a clean, centered branding icon above the 2-step PIN/Biometrics card.
+3. **Day-Wise Date Filtering in Transaction History**:
+   - In [src/app/history.tsx](file:///home/shakib/Product/FYDP/src/app/history.tsx), added date filter pills: `All Time`, `Today`, `Yesterday`, `Last 7 Days`, and `Last 30 Days`.
+   - Extracted `timestampMs` in [src/utils/transactionMapper.ts](file:///home/shakib/Product/FYDP/src/utils/transactionMapper.ts) to enable instant client-side date range filtering without reloading from server.
+   - Added English and Bengali translation keys in [src/constants/translations.ts](file:///home/shakib/Product/FYDP/src/constants/translations.ts).
