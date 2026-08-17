@@ -29,6 +29,7 @@ export default function SendMoneyConfirm() {
   };
 
   const handleAuthorized = () => {
+    console.log(`[DPT_NATIVE_TRACE][NAV_CALL] caller=SendMoneyConfirm.handleAuthorized target=/transaction-processing timestamp=${Date.now()}`);
     router.replace({
       pathname: '/transaction-processing',
       params: {

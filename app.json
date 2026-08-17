@@ -4,9 +4,7 @@
     "slug": "dpt-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon"
-    
-    : "./assets/images/icon.png",
+    "icon": "./assets/images/icon.png",
     "scheme": "dptapp",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -80,9 +78,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "ba013f1f-c849-4f48-b8e5-2d26635750c8"
+        "projectId": "e2119d94-e0a6-49db-9667-e50799ba7a38"
       }
     },
-    "owner": "shakib223"
+    "owner": "riajulhasanshakib"
   }
 }

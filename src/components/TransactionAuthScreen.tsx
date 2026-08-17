@@ -8,6 +8,7 @@ import {
   Dimensions,
   ActivityIndicator,
   InteractionManager,
+  findNodeHandle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -99,10 +100,13 @@ export function TransactionAuthScreen({
     };
   }, [pulseAnim]);
 
+  const containerRef = useRef<View>(null);
   const isMounted = useRef(true);
   const isNavigatingRef = useRef(false);
 
   const safeAuthorized = () => {
+    const timestamp = Date.now();
+    console.log(`[DPT_NATIVE_TRACE][NAV_CALL] caller=TransactionAuthScreen.safeAuthorized timestamp=${timestamp} isNavigating=${isNavigatingRef.current}`);
     if (isNavigatingRef.current) return;
     isNavigatingRef.current = true;
     onAuthorized();
@@ -111,9 +115,13 @@ export function TransactionAuthScreen({
   // Check biometric support on mount and attempt authentication
   useEffect(() => {
     isMounted.current = true;
+    const nodeTag = containerRef.current ? findNodeHandle(containerRef.current) : null;
+    console.log(`[DPT_NATIVE_TRACE][MOUNT] screen=TransactionAuthScreen nativeTag=${nodeTag} timestamp=${Date.now()}`);
+    
     checkBiometrics();
     return () => {
       isMounted.current = false;
+      console.log(`[DPT_NATIVE_TRACE][UNMOUNT] screen=TransactionAuthScreen nativeTag=${nodeTag} timestamp=${Date.now()}`);
       if (loopAnimRef.current) {
         loopAnimRef.current.stop();
       }
@@ -185,6 +193,7 @@ export function TransactionAuthScreen({
       if (!isMounted.current) return;
       setBiometricError(null);
       setBiometricStatus('authenticating');
+      console.log(`[DPT_NATIVE_TRACE][BIOMETRIC] event=start timestamp=${Date.now()}`);
 
       Sentry.addBreadcrumb({
         category: 'auth',
@@ -197,6 +206,8 @@ export function TransactionAuthScreen({
         fallbackLabel: t.usePinInsteadMsg || 'Use PIN Instead',
         disableDeviceFallback: false,
       });
+
+      console.log(`[DPT_NATIVE_TRACE][BIOMETRIC] event=${result.success ? 'success' : 'failed'} timestamp=${Date.now()}`);
 
       if (!isMounted.current) return;
 
@@ -327,7 +338,7 @@ export function TransactionAuthScreen({
   const dotsArray = Array.from({ length: pinLength });
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
+    <SafeAreaView ref={containerRef} style={[styles.safeArea, { backgroundColor: theme.background }]}>
       <Header title={title} onBackPress={onCancel} />
 
       <View style={styles.contentContainer}>

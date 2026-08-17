@@ -9,6 +9,7 @@ import {
   Dimensions,
   Easing,
   InteractionManager,
+  findNodeHandle,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -48,10 +49,13 @@ export default function TransactionProcessing() {
   const loopAnimRotRef = useRef<Animated.CompositeAnimation | null>(null);
 
   // Use a ref to track if component is mounted
+  const containerRef = useRef<View>(null);
   const isMounted = useRef(true);
   const isNavigatingRef = useRef(false);
 
   const safeReplace = (target: any) => {
+    const timestamp = Date.now();
+    console.log(`[DPT_NATIVE_TRACE][NAV_CALL] caller=TransactionProcessing.safeReplace target=${target?.pathname || target} timestamp=${timestamp}`);
     if (isNavigatingRef.current || !isMounted.current) return;
     isNavigatingRef.current = true;
     router.replace(target);
@@ -60,6 +64,8 @@ export default function TransactionProcessing() {
   // Setup loop pulsing and rotation animations on mount after interactions settle
   useEffect(() => {
     isMounted.current = true;
+    const nodeTag = containerRef.current ? findNodeHandle(containerRef.current) : null;
+    console.log(`[DPT_NATIVE_TRACE][MOUNT] screen=TransactionProcessing nativeTag=${nodeTag} timestamp=${Date.now()}`);
 
     const task = InteractionManager.runAfterInteractions(() => {
       if (!isMounted.current) return;
@@ -100,6 +106,7 @@ export default function TransactionProcessing() {
 
     return () => {
       isMounted.current = false;
+      console.log(`[DPT_NATIVE_TRACE][UNMOUNT] screen=TransactionProcessing nativeTag=${nodeTag} timestamp=${Date.now()}`);
       task.cancel();
       if (loopAnimPulseRef.current) loopAnimPulseRef.current.stop();
       if (loopAnimRotRef.current) loopAnimRotRef.current.stop();
@@ -333,7 +340,7 @@ export default function TransactionProcessing() {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
+    <SafeAreaView ref={containerRef} style={[styles.safeArea, { backgroundColor: theme.background }]}>
       <Header showBackButton={false} />
 
       <View style={styles.contentContainer}>

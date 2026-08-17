@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, findNodeHandle } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing } from '../constants/theme';
@@ -14,6 +14,15 @@ interface HeaderProps {
 export function Header({ title, showBackButton = true, onBackPress }: HeaderProps) {
   const router = useRouter();
   const { theme } = useAppTheme();
+  const headerRef = React.useRef<View>(null);
+
+  React.useEffect(() => {
+    const nodeTag = headerRef.current ? findNodeHandle(headerRef.current) : null;
+    console.log(`[DPT_NATIVE_TRACE][MOUNT] component=Header title="${title}" nativeTag=${nodeTag} timestamp=${Date.now()}`);
+    return () => {
+      console.log(`[DPT_NATIVE_TRACE][UNMOUNT] component=Header title="${title}" nativeTag=${nodeTag} timestamp=${Date.now()}`);
+    };
+  }, [title]);
 
   const handleBack = () => {
     if (onBackPress) {
@@ -24,7 +33,7 @@ export function Header({ title, showBackButton = true, onBackPress }: HeaderProp
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
+    <View ref={headerRef} style={[styles.container, { backgroundColor: theme.background }]}>
       {showBackButton ? (
         <TouchableOpacity
           onPress={handleBack}
