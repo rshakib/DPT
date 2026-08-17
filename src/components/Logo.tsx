@@ -1,6 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import Svg, { Path, Rect, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { View, Text, StyleSheet, Image } from 'react-native';
 import { useAppTheme } from '../context/ThemeContext';
 
 interface LogoProps {
@@ -8,47 +7,15 @@ interface LogoProps {
 }
 
 /**
- * Modern digital wallet / secure card vector icon for DPT
+ * Official DPT Brand Logo from assets/DPT.png
  */
-export function LogoMark({ size = 48 }: LogoProps) {
-  const { theme } = useAppTheme();
-  const gradStart = theme.gradient[0] || theme.primary;
-  const gradEnd = theme.gradient[1] || theme.primary;
-
+export function LogoMark({ size = 56 }: LogoProps) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 100 100" fill="none">
-      <Defs>
-        <LinearGradient id="dptGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <Stop offset="0%" stopColor={gradStart} />
-          <Stop offset="100%" stopColor={gradEnd} />
-        </LinearGradient>
-      </Defs>
-      {/* Wallet / Pocket body */}
-      <Rect
-        x="12"
-        y="22"
-        width="76"
-        height="56"
-        rx="16"
-        stroke="url(#dptGrad)"
-        strokeWidth="7"
-      />
-      {/* Pocket Flap / Card Notch */}
-      <Path
-        d="M12 42C30 42 35 34 50 34C65 34 70 42 88 42"
-        stroke="url(#dptGrad)"
-        strokeWidth="6"
-        strokeLinecap="round"
-      />
-      {/* Fast Transfer Lightning / Chip Token */}
-      <Circle cx="64" cy="54" r="7" fill="url(#dptGrad)" />
-      <Path
-        d="M32 54H48"
-        stroke="url(#dptGrad)"
-        strokeWidth="6"
-        strokeLinecap="round"
-      />
-    </Svg>
+    <Image
+      source={require('../../assets/DPT.png')}
+      style={{ width: size, height: size }}
+      resizeMode="contain"
+    />
   );
 }
 
