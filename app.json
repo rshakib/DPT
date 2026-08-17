@@ -75,9 +75,7 @@
     },
     "extra": {
       "router": {},
-      "eas": {
-        "projectId": "37ac5414-5d44-439d-94d5-dd9f2f6e32a5"
-      }
+      "eas": {}
     },
     "owner": "shakib223"
   }
