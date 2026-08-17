@@ -125,6 +125,24 @@ class SyncService {
               console.log(`[SYNC SERVICE] Offline transaction ${offlineItem.id} settled successfully!`);
               await db.removePendingOfflineTransaction(offlineItem.id);
               hasChanges = true;
+            } else {
+              // The receiver was invalid/not found on the server
+              const errorMsg = transferRes.message || '';
+              console.warn(`[SYNC SERVICE] Offline transaction ${offlineItem.id} rejected by server: ${errorMsg}`);
+              
+              // Remove the rejected transaction from the pending queue
+              await db.removePendingOfflineTransaction(offlineItem.id);
+
+              // Inject a notification to inform the user that the money is safe and refunded
+              const refundNotif = {
+                id: `notif-refund-${Date.now()}`,
+                title: 'Offline Transfer Failed - Balance Restored',
+                message: `Transfer of ৳${offlineItem.amount} to @${offlineItem.receiver} could not be completed (${errorMsg}). Your balance is restored.`,
+                notification_type: 'security',
+                created_at: new Date().toISOString(),
+              };
+              await db.mergeCachedNotifications(username, [refundNotif]);
+              hasChanges = true;
             }
           } catch (e) {
             console.warn(`[SYNC SERVICE] Retrying offline transaction ${offlineItem.id} later:`, e);
