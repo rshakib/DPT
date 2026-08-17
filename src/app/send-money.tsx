@@ -43,8 +43,9 @@ export default function SendMoney() {
   // Focus States
   const [focusedField, setFocusedField] = useState<'receiver' | 'amount' | null>(null);
 
-  // Debounce Timer Ref
+  // Debounce Timer & Async Request ID Refs
   const checkTimerRef = useRef<any>(null);
+  const requestIdRef = useRef<number>(0);
 
   // Input Refs for touch target improvements
   const receiverRef = useRef<TextInput>(null);
@@ -64,6 +65,8 @@ export default function SendMoney() {
   const handleReceiverChange = (text: string) => {
     // Filter out spaces and special characters except underscores (allowing A-Z and a-z)
     const allowed = text.replace(/[^a-zA-Z0-9_]/g, '');
+    const currentRequestId = ++requestIdRef.current;
+
     setReceiverInput(allowed);
     setVerifiedReceiver(null);
     setIsOfflineMode(false);
@@ -84,28 +87,37 @@ export default function SendMoney() {
     checkTimerRef.current = setTimeout(async () => {
       const cleaned = allowed.trim().toLowerCase();
 
+      if (currentRequestId !== requestIdRef.current) return;
+
       // client-side self-transaction check using user.username from AuthContext
       if (cleaned === user?.username?.toLowerCase()) {
+        if (currentRequestId !== requestIdRef.current) return;
         setIsValidating(false);
+        setVerifiedReceiver(null);
         setValidationError(t.selfTxNotAllowed);
         return;
       }
 
       const result = await api.checkReceiver(cleaned);
+      if (currentRequestId !== requestIdRef.current) return;
       setIsValidating(false);
 
       if (result.success) {
         setVerifiedReceiver(`@${cleaned}`);
+        setValidationError(null);
         setIsOfflineMode(false);
       } else if (result.message && result.message.toLowerCase().includes('network')) {
         // Optimistic Offline Mode: Allow valid alphanumeric usernames when offline
         if (cleaned.length >= 3) {
           setVerifiedReceiver(`@${cleaned}`);
+          setValidationError(null);
           setIsOfflineMode(true);
         } else {
+          setVerifiedReceiver(null);
           setValidationError(language === 'en' ? 'Username must be at least 3 characters in offline mode.' : 'অফলাইন মোডে ব্যবহারকারীর নাম কমপক্ষে ৩ অক্ষরের হতে হবে।');
         }
       } else {
+        setVerifiedReceiver(null);
         setValidationError(result.message || t.receiverNotFoundMsg);
       }
     }, 500);
@@ -227,7 +239,7 @@ export default function SendMoney() {
                   <Text style={[styles.feedbackChecking, { color: theme.textSecondary }]}>{t.checkingUsername}</Text>
                 </View>
               )}
-              {verifiedReceiver && (
+              {verifiedReceiver && !validationError && !isValidating && (
                 <View style={styles.feedbackRow}>
                   <Ionicons name={isOfflineMode ? "cloud-offline-outline" : "checkmark-circle"} size={16} color={isOfflineMode ? theme.primary : theme.success} />
                   <Text style={[styles.feedbackSuccess, { color: isOfflineMode ? theme.primary : theme.success }]}>
@@ -237,7 +249,7 @@ export default function SendMoney() {
                   </Text>
                 </View>
               )}
-              {validationError && (
+              {validationError && !isValidating && (
                 <View style={styles.feedbackRow}>
                   <Ionicons name="alert-circle" size={16} color={theme.error} />
                   <Text style={[styles.feedbackError, { color: theme.error }]}>{validationError}</Text>
