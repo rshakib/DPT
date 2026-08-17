@@ -38,7 +38,13 @@ export default function CreatePassword() {
   
   // Retrieve navigation parameters from previous screens
   const params = useLocalSearchParams();
-  const { nid = '', activationCode = '', username = '', bp = '' } = params;
+  const rawNid = Array.isArray(params.nid) ? params.nid[0] : params.nid;
+  const rawCode = Array.isArray(params.activationCode) ? params.activationCode[0] : params.activationCode;
+  const rawUser = Array.isArray(params.username) ? params.username[0] : params.username;
+
+  const nid = String(rawNid || '').trim();
+  const activationCode = String(rawCode || '').trim();
+  const username = String(rawUser || '').toLowerCase().trim();
 
   // Form States (PIN values)
   const [password, setPassword] = useState(''); // Stores the PIN
@@ -111,20 +117,25 @@ export default function CreatePassword() {
     setFieldErrors({});
 
     try {
-      const normalizedUsername = String(username).toLowerCase().trim();
+      if (!username || !nid || !activationCode || password.length < 8) {
+        setIsLoading(false);
+        setShowErrorBanner(true);
+        setErrorMessage('Missing username, password, NID/BRC, or activation code');
+        return;
+      }
 
       const result = await api.register(
-        normalizedUsername,
+        username,
         password,
-        String(nid),
-        String(activationCode)
+        nid,
+        activationCode
       );
 
       if (result.success) {
-        await saveLocalPinHash(normalizedUsername, password);
+        await saveLocalPinHash(username, password);
 
         // Auto-authenticate session, update AuthContext & SecureStore, and seed SQLite cache
-        const loginRes = await login(normalizedUsername, password);
+        const loginRes = await login(username, password);
         if (loginRes.success) {
           unlock();
         }
@@ -137,8 +148,7 @@ export default function CreatePassword() {
           params: {
             nid,
             activationCode,
-            username: normalizedUsername,
-            bp,
+            username,
             password, // Passing the PIN value
           },
         });

@@ -38,7 +38,13 @@ export default function BiometricEnrollment() {
 
   // Retrieve passed parameters from previous screen
   const params = useLocalSearchParams();
-  const { nid = '', activationCode = '', username = '', password = '', fullName = '' } = params;
+  const rawNid = Array.isArray(params.nid) ? params.nid[0] : params.nid;
+  const rawCode = Array.isArray(params.activationCode) ? params.activationCode[0] : params.activationCode;
+  const rawUser = Array.isArray(params.username) ? params.username[0] : params.username;
+
+  const nid = String(rawNid || '').trim();
+  const activationCode = String(rawCode || '').trim();
+  const username = String(rawUser || '').toLowerCase().trim();
 
   // Biometrics State
   const [authStatus, setAuthStatus] = useState<AuthStatus>('idle');
@@ -127,9 +133,9 @@ export default function BiometricEnrollment() {
     router.push({
       pathname: '/create-password',
       params: {
-        nid: String(nid),
-        activationCode: String(activationCode),
-        username: String(username),
+        nid,
+        activationCode,
+        username,
       },
     });
   };
