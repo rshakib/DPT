@@ -101,21 +101,61 @@ export default function CreatePassword() {
     password === confirmPassword &&
     !isLoading;
 
-  const handleActivate = () => {
+  const handleActivate = async () => {
     if (!isFormValid) return;
 
-    const normalizedUsername = String(username).toLowerCase().trim();
+    // Reset previous states
+    setIsLoading(true);
+    setShowErrorBanner(false);
+    setErrorMessage('');
+    setFieldErrors({});
 
-    router.push({
-      pathname: '/biometric-enrollment',
-      params: {
-        nid: String(nid),
-        activationCode: String(activationCode),
-        username: normalizedUsername,
+    try {
+      const normalizedUsername = String(username).toLowerCase().trim();
+      const userFullName = Array.isArray(params.fullName) ? params.fullName[0] : params.fullName || '';
+
+      const result = await api.register(
+        normalizedUsername,
         password,
-        fullName: Array.isArray(params.fullName) ? params.fullName[0] : params.fullName || '',
-      },
-    });
+        String(nid),
+        String(activationCode)
+      );
+
+      if (result.success) {
+        await saveLocalPinHash(normalizedUsername, password);
+
+        // Auto-authenticate session, update AuthContext & SecureStore, and seed SQLite cache
+        const loginRes = await login(normalizedUsername, password);
+        if (loginRes.success) {
+          unlock();
+          setIsLoading(false);
+
+          // SUCCESS STATE: Navigate to Biometric Enrollment page in page flow
+          router.push({
+            pathname: '/biometric-enrollment',
+            params: {
+              nid: String(nid),
+              activationCode: String(activationCode),
+              username: normalizedUsername,
+              fullName: String(userFullName),
+            },
+          });
+        } else {
+          setIsLoading(false);
+          setShowErrorBanner(true);
+          setErrorMessage(`Account created, but automatic sign-in failed: ${loginRes.message || 'Authentication error'}`);
+        }
+      } else {
+        setIsLoading(false);
+        // ERROR STATE: Show failure banner with real API message
+        setShowErrorBanner(true);
+        setErrorMessage(result.message || 'Registration failed.');
+      }
+    } catch (e: any) {
+      setIsLoading(false);
+      setShowErrorBanner(true);
+      setErrorMessage(e.message || 'Connection error occurred.');
+    }
   };
 
   return (

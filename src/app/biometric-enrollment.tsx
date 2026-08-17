@@ -123,57 +123,16 @@ export default function BiometricEnrollment() {
     }
   };
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const navigateToNextScreen = async () => {
-    if (isSubmitting) return;
-    setIsSubmitting(true);
-
-    try {
-      const normalizedUsername = String(username).toLowerCase().trim();
-      const pin = String(password || '');
-
-      if (pin.length >= 8) {
-        const result = await api.register(
-          normalizedUsername,
-          pin,
-          String(nid),
-          String(activationCode)
-        );
-
-        if (result.success) {
-          await saveLocalPinHash(normalizedUsername, pin);
-          const loginRes = await login(normalizedUsername, pin);
-          if (loginRes.success) {
-            unlock();
-          }
-          router.push({
-            pathname: '/activation-success',
-            params: {
-              nid: String(nid),
-              activationCode: String(activationCode),
-              username: normalizedUsername,
-              fullName: String(fullName),
-            },
-          });
-          return;
-        } else {
-          setErrorMessage(result.message || 'Registration failed.');
-          setAuthStatus('failed');
-          setIsSubmitting(false);
-          return;
-        }
-      }
-
-      router.push({
-        pathname: '/activation-success',
-        params: { nid: String(nid), activationCode: String(activationCode), username: String(username) },
-      });
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Registration error');
-      setAuthStatus('failed');
-      setIsSubmitting(false);
-    }
+  const navigateToNextScreen = () => {
+    router.push({
+      pathname: '/activation-success',
+      params: {
+        nid: String(nid),
+        activationCode: String(activationCode),
+        username: String(username),
+        fullName: String(fullName),
+      },
+    });
   };
 
   const handleContinueFallback = () => {
