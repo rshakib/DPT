@@ -137,7 +137,7 @@ export default function Login() {
         >
           {/* Top Big Centered Logo & Punchline */}
           <View style={styles.logoContainer}>
-            <LogoMark size={110} />
+            <LogoMark size={200} />
           </View>
           <Text style={[styles.brandSlogan, { color: theme.textSecondary }]}>
             Digital Pocket Transaction

@@ -208,10 +208,7 @@ export default function QuickUnlock() {
 
         {/* Logo & Welcome Back Section */}
         <View style={styles.logoSection}>
-          <LogoMark size={50} />
-          <Text style={[styles.logoText, { color: theme.text }]}>
-            D<Text style={{ color: theme.primary }}>PT</Text>
-          </Text>
+          <LogoMark size={160} />
           <Text style={[styles.brandSlogan, { color: theme.textSecondary }]}>
             Digital Pocket Transaction
           </Text>

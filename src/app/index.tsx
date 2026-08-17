@@ -25,12 +25,7 @@ export default function ActivationStart() {
 
       {/* Top Header - Logo and Slogan */}
       <View style={styles.headerContainer}>
-        <View style={styles.logoRow}>
-          <LogoMark size={42} />
-          <Text style={[styles.logoText, { color: theme.text }]}>
-            D<Text style={[styles.logoTextAccent, { color: theme.primary }]}>PT</Text>
-          </Text>
-        </View>
+        <LogoMark size={160} />
         <View style={styles.sloganRow}>
           <View style={[styles.sloganLine, { backgroundColor: theme.border }]} />
           <Text style={[styles.sloganText, { color: theme.textSecondary }]}>Digital Pocket Transaction</Text>
