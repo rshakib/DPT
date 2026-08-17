@@ -21,6 +21,8 @@ import { Image } from 'react-native';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
+import { useAuth } from '../context/AuthContext';
+import { useAppLock } from '../context/AppLockContext';
 import * as api from '../services/api';
 import { saveLocalPinHash } from '../utils/security';
 
@@ -31,6 +33,8 @@ export default function CreatePassword() {
   const { theme, isDarkMode } = useAppTheme();
   const { language } = useLanguage();
   const t = translations[language];
+  const { login } = useAuth();
+  const { unlock } = useAppLock();
   
   // Retrieve navigation parameters from previous screens
   const params = useLocalSearchParams();
@@ -107,29 +111,39 @@ export default function CreatePassword() {
     setFieldErrors({});
 
     try {
+      const normalizedUsername = String(username).toLowerCase().trim();
+
       const result = await api.register(
-        String(username),
+        normalizedUsername,
         password,
         String(nid),
         String(activationCode)
       );
 
-      setIsLoading(false);
-
       if (result.success) {
-        await saveLocalPinHash(String(username), password);
-        // SUCCESS STATE: Navigate to Biometric Enrollment screen in onboarding page order
+        await saveLocalPinHash(normalizedUsername, password);
+
+        // Auto-authenticate session, update AuthContext & SecureStore, and seed SQLite cache
+        const loginRes = await login(normalizedUsername, password);
+        if (loginRes.success) {
+          unlock();
+        }
+
+        setIsLoading(false);
+
+        // SUCCESS STATE: Navigate to success page
         router.push({
-          pathname: '/biometric-enrollment',
+          pathname: '/activation-success',
           params: {
             nid,
             activationCode,
-            username,
+            username: normalizedUsername,
             bp,
             password, // Passing the PIN value
           },
         });
       } else {
+        setIsLoading(false);
         // ERROR STATE: Show failure banner with real API message
         setShowErrorBanner(true);
         setErrorMessage(result.message || 'Registration failed.');

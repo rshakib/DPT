@@ -125,12 +125,11 @@ export default function BiometricEnrollment() {
 
   const navigateToNextScreen = () => {
     router.push({
-      pathname: '/activation-success',
+      pathname: '/create-password',
       params: {
         nid: String(nid),
         activationCode: String(activationCode),
         username: String(username),
-        fullName: String(fullName),
       },
     });
   };
