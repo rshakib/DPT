@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { TransactionAuthScreen } from '../components/TransactionAuthScreen';
+import { TransactionProcessingView } from '../components/TransactionProcessingView';
 import { useAuth } from '../context/AuthContext';
 import { verifyPinLocally } from '../utils/security';
 
@@ -8,6 +9,7 @@ export default function BillConfirm() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Unpack routing parameters safely
   const receiverUsername = Array.isArray(params.receiverUsername)
@@ -32,21 +34,24 @@ export default function BillConfirm() {
   };
 
   const handleAuthorized = () => {
-    router.replace({
-      pathname: '/transaction-processing',
-      params: {
-        receiverUsername,
-        amount,
-        type: 'bill_payment',
-        billerName,
-        billerAccountNo,
-      },
-    });
+    setIsProcessing(true);
   };
 
   const handleCancel = () => {
     router.back();
   };
+
+  if (isProcessing) {
+    return (
+      <TransactionProcessingView
+        receiverUsername={receiverUsername}
+        amount={amount}
+        type="bill_payment"
+        billerName={billerName}
+        billerAccountNo={billerAccountNo}
+      />
+    );
+  }
 
   return (
     <TransactionAuthScreen

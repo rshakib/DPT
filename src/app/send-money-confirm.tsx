@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { TransactionAuthScreen } from '../components/TransactionAuthScreen';
+import { TransactionProcessingView } from '../components/TransactionProcessingView';
 import { useAuth } from '../context/AuthContext';
 import { verifyPinLocally } from '../utils/security';
 
@@ -8,6 +9,7 @@ export default function SendMoneyConfirm() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Unpack routing parameters safely
   const receiverUsername = Array.isArray(params.receiverUsername)
@@ -29,20 +31,22 @@ export default function SendMoneyConfirm() {
   };
 
   const handleAuthorized = () => {
-    console.log(`[DPT_NATIVE_TRACE][NAV_CALL] caller=SendMoneyConfirm.handleAuthorized target=/transaction-processing timestamp=${Date.now()}`);
-    router.replace({
-      pathname: '/transaction-processing',
-      params: {
-        receiverUsername,
-        amount,
-        type,
-      },
-    });
+    setIsProcessing(true);
   };
 
   const handleCancel = () => {
     router.back();
   };
+
+  if (isProcessing) {
+    return (
+      <TransactionProcessingView
+        receiverUsername={receiverUsername}
+        amount={amount}
+        type={type}
+      />
+    );
+  }
 
   return (
     <TransactionAuthScreen

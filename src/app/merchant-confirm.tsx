@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { TransactionAuthScreen } from '../components/TransactionAuthScreen';
+import { TransactionProcessingView } from '../components/TransactionProcessingView';
 import { useAuth } from '../context/AuthContext';
 import { verifyPinLocally } from '../utils/security';
 
@@ -8,6 +9,7 @@ export default function MerchantConfirm() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user } = useAuth();
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Unpack routing parameters safely
   const merchantName = Array.isArray(params.merchantName)
@@ -31,20 +33,23 @@ export default function MerchantConfirm() {
   };
 
   const handleAuthorized = () => {
-    router.replace({
-      pathname: '/transaction-processing',
-      params: {
-        receiverUsername,
-        amount,
-        type: 'merchant_payment',
-        merchantName,
-      },
-    });
+    setIsProcessing(true);
   };
 
   const handleCancel = () => {
     router.back();
   };
+
+  if (isProcessing) {
+    return (
+      <TransactionProcessingView
+        receiverUsername={receiverUsername}
+        amount={amount}
+        type="merchant_payment"
+        merchantName={merchantName}
+      />
+    );
+  }
 
   return (
     <TransactionAuthScreen
