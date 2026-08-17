@@ -38,7 +38,13 @@ export default function CreatePassword() {
   
   // Retrieve navigation parameters from previous screens
   const params = useLocalSearchParams();
-  const { nid = '', activationCode = '', username = '', bp = '' } = params;
+  const rawNid = Array.isArray(params.nid) ? params.nid[0] : params.nid;
+  const rawCode = Array.isArray(params.activationCode) ? params.activationCode[0] : params.activationCode;
+  const rawUser = Array.isArray(params.username) ? params.username[0] : params.username;
+
+  const nid = String(rawNid || '').trim();
+  const activationCode = String(rawCode || '').trim();
+  const username = String(rawUser || '').toLowerCase().trim();
 
   // Form States (PIN values)
   const [password, setPassword] = useState(''); // Stores the PIN

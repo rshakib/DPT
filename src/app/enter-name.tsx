@@ -31,7 +31,13 @@ export default function EnterName() {
 
   // Retrieve incoming navigation parameters
   const params = useLocalSearchParams();
-  const { nid = '', activationCode = '', username = '' } = params;
+  const rawNid = Array.isArray(params.nid) ? params.nid[0] : params.nid;
+  const rawCode = Array.isArray(params.activationCode) ? params.activationCode[0] : params.activationCode;
+  const rawUser = Array.isArray(params.username) ? params.username[0] : params.username;
+
+  const nid = String(rawNid || '').trim();
+  const activationCode = String(rawCode || '').trim();
+  const username = String(rawUser || '').toLowerCase().trim();
 
   // Form state
   const [fullName, setFullName] = useState('');
@@ -47,9 +53,9 @@ export default function EnterName() {
     router.push({
       pathname: '/create-password',
       params: {
-        nid: String(nid),
-        activationCode: String(activationCode),
-        username: String(username),
+        nid,
+        activationCode,
+        username,
         fullName: fullName.trim(),
       },
     });
