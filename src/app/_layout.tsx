@@ -1,6 +1,6 @@
 import { enableScreens } from 'react-native-screens';
 
-enableScreens(false);
+enableScreens(true);
 
 import React, { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';

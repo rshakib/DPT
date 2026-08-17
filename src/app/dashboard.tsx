@@ -34,6 +34,35 @@ interface GridItemProps {
   iconType?: 'ionicons' | 'mcommunity';
 }
 
+function GridItem({
+  title,
+  iconName,
+  route,
+  iconType = 'ionicons',
+  onNavigate,
+  theme,
+  isDarkMode,
+}: GridItemProps & { onNavigate: (route: string) => void; theme: any; isDarkMode: boolean }) {
+  return (
+    <TouchableOpacity
+      style={styles.gridItem}
+      onPress={() => onNavigate(route)}
+      activeOpacity={0.7}
+    >
+      <View style={[styles.gridIconWrapper, { backgroundColor: isDarkMode ? '#2C2754' : '#FAF9FF', borderColor: theme.border }]}>
+        {iconType === 'mcommunity' ? (
+          <MaterialCommunityIcons name={iconName} size={26} color={theme.primary} />
+        ) : (
+          <Ionicons name={iconName} size={26} color={theme.primary} />
+        )}
+      </View>
+      <Text style={[styles.gridItemText, { color: theme.text }]} numberOfLines={2}>
+        {title}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const { theme, isDarkMode } = useAppTheme();
@@ -173,28 +202,6 @@ export default function Dashboard() {
     router.push(route as any);
   };
 
-  // Reusable feature card button inside the grid
-  const GridItem = ({ title, iconName, route, iconType = 'ionicons' }: GridItemProps) => {
-    return (
-      <TouchableOpacity
-        style={styles.gridItem}
-        onPress={() => handleNavigate(route)}
-        activeOpacity={0.7}
-      >
-        <View style={[styles.gridIconWrapper, { backgroundColor: isDarkMode ? '#2C2754' : '#FAF9FF', borderColor: theme.border }]}>
-          {iconType === 'mcommunity' ? (
-            <MaterialCommunityIcons name={iconName} size={26} color={theme.primary} />
-          ) : (
-            <Ionicons name={iconName} size={26} color={theme.primary} />
-          )}
-        </View>
-        <Text style={[styles.gridItemText, { color: theme.text }]} numberOfLines={2}>
-          {title}
-        </Text>
-      </TouchableOpacity>
-    );
-  };
-
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
@@ -296,16 +303,16 @@ export default function Dashboard() {
         {/* Feature Grid Container */}
         <View style={[styles.gridContainer, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
           <View style={styles.gridRow}>
-            <GridItem title={t.sendMoney || 'Send Money'} iconName="paper-plane-outline" route="/send-money" />
-            <GridItem title={t.merchantPayment || 'Merchant Payment'} iconName="storefront-outline" route="/merchant" />
-            <GridItem title={t.mobileRecharge || 'Mobile Recharge'} iconName="flash-outline" route="/recharge" />
-            <GridItem title={t.billPayment || 'Bill Payment'} iconName="document-text-outline" route="/bills" />
+            <GridItem title={t.sendMoney || 'Send Money'} iconName="paper-plane-outline" route="/send-money" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
+            <GridItem title={t.merchantPayment || 'Merchant Payment'} iconName="storefront-outline" route="/merchant" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
+            <GridItem title={t.mobileRecharge || 'Mobile Recharge'} iconName="flash-outline" route="/recharge" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
+            <GridItem title={t.billPayment || 'Bill Payment'} iconName="document-text-outline" route="/bills" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
           </View>
           <View style={styles.gridRow}>
-            <GridItem title={t.cashOut || 'Cash Out'} iconName="cash-outline" route="/cashout" />
-            <GridItem title={t.qrPay || 'QR Pay'} iconName="qr-code-outline" route="/qr-pay" />
-            <GridItem title={t.transactionHistory || 'Transaction History'} iconName="time-outline" route="/history" />
-            <GridItem title={t.myQr || 'My QR'} iconName="qr-code" route="/my-qr" />
+            <GridItem title={t.cashOut || 'Cash Out'} iconName="cash-outline" route="/cashout" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
+            <GridItem title={t.qrPay || 'QR Pay'} iconName="qr-code-outline" route="/qr-pay" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
+            <GridItem title={t.transactionHistory || 'Transaction History'} iconName="time-outline" route="/history" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
+            <GridItem title={t.myQr || 'My QR'} iconName="qr-code" route="/my-qr" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
           </View>
         </View>
 
