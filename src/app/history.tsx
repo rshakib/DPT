@@ -361,11 +361,22 @@ export default function History() {
         >
           {filteredTx.map((tx) => {
             const isTxSuccess = tx.statusEnglish === 'Successful';
+            const isOffline = tx.isOfflinePending;
             
             return (
               <TouchableOpacity
                 key={tx.id}
-                style={[styles.transactionCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
+                style={[
+                  styles.transactionCard,
+                  {
+                    backgroundColor: isOffline
+                      ? (isDarkMode ? 'rgba(255, 56, 56, 0.08)' : '#FFF5F5')
+                      : theme.cardBg,
+                    borderColor: isOffline
+                      ? (isDarkMode ? 'rgba(255, 56, 56, 0.2)' : '#FFD2D2')
+                      : theme.border,
+                  },
+                ]}
                 onPress={() => handleCardPress(tx)}
                 activeOpacity={0.8}
               >
@@ -396,13 +407,27 @@ export default function History() {
                   {/* Small pill badge */}
                   <View style={[
                     styles.statusBadge,
-                    { backgroundColor: isTxSuccess ? 'rgba(9, 196, 135, 0.08)' : 'rgba(255, 56, 56, 0.08)' }
+                    {
+                      backgroundColor: isOffline
+                        ? (isDarkMode ? 'rgba(255, 56, 56, 0.15)' : 'rgba(255, 56, 56, 0.08)')
+                        : isTxSuccess
+                        ? 'rgba(9, 196, 135, 0.08)'
+                        : 'rgba(255, 56, 56, 0.08)'
+                    }
                   ]}>
                     <Text style={[
                        styles.statusBadgeText,
-                       { color: isTxSuccess ? theme.success : theme.error }
+                       {
+                         color: isOffline
+                           ? theme.error
+                           : isTxSuccess
+                           ? theme.success
+                           : theme.error
+                       }
                     ]}>
-                      {tx.status}
+                      {isOffline
+                        ? (language === 'en' ? 'Offline Queue' : 'অফলাইন কিউ')
+                        : tx.status}
                     </Text>
                   </View>
                 </View>

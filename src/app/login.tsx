@@ -5,9 +5,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  KeyboardAvoidingView,
-  ScrollView,
-  Platform,
   Dimensions,
   Pressable,
   ActivityIndicator,
@@ -17,7 +14,6 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing } from '../constants/theme';
-import { Header } from '../components/Header';
 import { LogoMark } from '../components/Logo';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -26,6 +22,8 @@ import { useAuth } from '../context/AuthContext';
 import { useAppLock } from '../context/AppLockContext';
 
 const { width } = Dimensions.get('window');
+const NUMPAD_WIDTH = width * 0.90;
+const KEY_SIZE = NUMPAD_WIDTH / 3;
 
 export default function Login() {
   const router = useRouter();
@@ -37,30 +35,34 @@ export default function Login() {
 
   // Form States
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState(''); // Stores the PIN
-  const [passwordTouched, setPasswordTouched] = useState(false);
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [focusedField, setFocusedField] = useState<'username' | null>(null);
 
-  // Layout & Focus States
-  const [focusedField, setFocusedField] = useState<'username' | 'password' | null>(null);
-
-  // Screen/Request States (Server Auth Errors)
+  // Screen/Request States
   const [isLoading, setIsLoading] = useState(false);
   const [showErrorBanner, setShowErrorBanner] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Refs for touch targets
   const usernameRef = useRef<TextInput>(null);
-  const passwordRef = useRef<TextInput>(null);
 
-  // Live Format-Validation Error for PIN (Only after touch/blur and if non-empty)
-  const passwordFormatError =
-    passwordTouched && password.length > 0 && password.length !== 8
-      ? t.pinExactlyDigitsError
-      : null;
+  const isFormValid = username.trim() !== '' && password.length === 5 && !isLoading;
 
-  // Form check: Bank Username filled + PIN is exactly 8 digits
-  const isFormValid = username.trim() !== '' && password.length === 8 && !isLoading;
+  const handleNumPress = (num: number) => {
+    if (password.length < 5) {
+      setPassword(password + num);
+      if (showErrorBanner) {
+        setShowErrorBanner(false);
+        setErrorMessage(null);
+      }
+    }
+  };
+
+  const handleBackspace = () => {
+    if (password.length > 0) {
+      setPassword(password.slice(0, -1));
+    }
+  };
 
   const handleLogin = async () => {
     if (!isFormValid) return;
@@ -78,6 +80,7 @@ export default function Login() {
     } else {
       setErrorMessage(result.message || null);
       setShowErrorBanner(true);
+      setPassword('');
     }
   };
 
@@ -89,27 +92,12 @@ export default function Login() {
     );
   };
 
-  const handleTextInputChange = (field: 'username' | 'password', text: string) => {
-    if (field === 'username') {
-      setUsername(text);
-    }
-    if (field === 'password') {
-      const digits = text.replace(/[^0-9]/g, '');
-      setPassword(digits);
-    }
-
-    // Clear server error banner on input edit
-    if (showErrorBanner) {
-      setShowErrorBanner(false);
-      setErrorMessage(null);
-    }
-  };
+  const maskedPin = '•'.repeat(password.length);
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
-      <Header showBackButton={true} />
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: '#FFFFFF' }]}>
 
-      {/* Red Warning Banner (Server ERROR STATE only) */}
+      {/* Red Warning Banner */}
       {showErrorBanner && (
         <View style={[styles.errorBanner, { backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.1)' : '#FFF5F5', borderColor: theme.error }]}>
           <View style={styles.errorBannerLeft}>
@@ -119,7 +107,7 @@ export default function Login() {
                 {errorMessage || t.invalidUsernamePassword}
               </Text>
               <Text style={[styles.errorBannerSubtitle, { color: theme.error }]}>
-                {errorMessage ? (language === 'en' ? 'Please check your inputs and try again.' : 'অনুগ্রহ করে সঠিক তথ্য দিয়ে আবার চেষ্টা করুন।') : t.checkCredentialsRetry}
+                {errorMessage ? (language === 'en' ? 'Please check your inputs and try again.' : 'অনুগ্রহ করে সঠিক তথ্য দিয়ে আবার চেষ্টা করুন।') : t.checkCredentialsRetry}
               </Text>
             </View>
           </View>
@@ -129,171 +117,142 @@ export default function Login() {
         </View>
       )}
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.keyboardAvoid}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
+      {/* Logo */}
+      <View style={styles.logoSection}>
+        <LogoMark size={200} />
+        <Text style={[styles.brandSlogan, { color: '#999' }]}>Digital Pocket Transaction</Text>
+      </View>
+
+      {/* Username Input */}
+      <View style={styles.inputSection}>
+        <Text style={[styles.label, { color: '#333' }]}>{t.bankUsernameLabel}</Text>
+        <Pressable
+          onPress={() => usernameRef.current?.focus()}
+          style={[
+            styles.inputWrapper,
+            { borderColor: focusedField === 'username' ? theme.primary : '#E5E5E5' },
+          ]}
         >
-          {/* Top Hero Centered Logo & Punchline */}
-          <View style={styles.logoContainer}>
-            <LogoMark size={280} />
-          </View>
-          <Text style={[styles.brandSlogan, { color: theme.textSecondary }]}>
-            Digital Pocket Transaction
+          <Ionicons
+            name="person-outline"
+            size={20}
+            color={focusedField === 'username' ? theme.primary : '#C0C0C0'}
+            style={styles.inputIcon}
+          />
+          <TextInput
+            ref={usernameRef}
+            style={[styles.input, { color: '#333' }]}
+            placeholder={t.enterRegUsernamePlaceholder}
+            placeholderTextColor="#C0C0C0"
+            value={username}
+            onChangeText={(text) => {
+              setUsername(text);
+              if (showErrorBanner) {
+                setShowErrorBanner(false);
+                setErrorMessage(null);
+              }
+            }}
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!isLoading}
+            onFocus={() => setFocusedField('username')}
+            onBlur={() => setFocusedField(null)}
+          />
+        </Pressable>
+      </View>
+
+      {/* PIN Display */}
+      <View style={styles.pinSection}>
+        <Text style={[styles.label, { color: '#333' }]}>{t.privatePinLabel}</Text>
+        <View style={[styles.pinDisplayRow]}>
+          <Text style={[styles.pinReveal, { color: password.length > 0 ? '#333' : '#C0C0C0' }]}>
+            {password.length > 0 ? (showPassword ? password : maskedPin) : (language === 'en' ? 'Enter 5-digit PIN' : '৫ ডিজিট পিন দিন')}
           </Text>
-
-          {/* Prompt Header */}
-          <View style={styles.textContainer}>
-            <Text style={[styles.title, { color: theme.text }]}>{t.welcomeBack}</Text>
-            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{t.loginToAccount}</Text>
-          </View>
-
-          {/* Form Fields */}
-          <View style={styles.formContainer}>
-            
-            {/* Field 1: Bank Username */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: theme.text }]}>{t.bankUsernameLabel}</Text>
-              <Pressable
-                onPress={() => usernameRef.current?.focus()}
-                style={[
-                  styles.inputWrapper,
-                  { borderColor: theme.border, backgroundColor: theme.backgroundElement },
-                  focusedField === 'username' && [styles.inputWrapperFocused, { borderColor: theme.primary, backgroundColor: theme.background, shadowColor: theme.primary }],
-                  showErrorBanner && [styles.inputWrapperError, { borderColor: theme.error, backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.1)' : '#FFF9F9' }],
-                ]}
-              >
-                <Ionicons
-                  name="person-outline"
-                  size={22}
-                  color={
-                    showErrorBanner
-                      ? theme.error
-                      : focusedField === 'username'
-                      ? theme.primary
-                      : theme.textSecondary
-                  }
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  ref={usernameRef}
-                  style={[styles.input, { color: theme.text }]}
-                  placeholder={t.enterRegUsernamePlaceholder}
-                  placeholderTextColor={isDarkMode ? '#7E7C9D' : '#A5A3C1'}
-                  value={username}
-                  onChangeText={(text) => handleTextInputChange('username', text)}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={!isLoading}
-                  onFocus={() => setFocusedField('username')}
-                  onBlur={() => setFocusedField(null)}
-                />
-              </Pressable>
-            </View>
-
-            {/* Field 2: Private PIN */}
-            <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: theme.text }]}>{t.privatePinLabel}</Text>
-              <Pressable
-                onPress={() => passwordRef.current?.focus()}
-                style={[
-                  styles.inputWrapper,
-                  { borderColor: theme.border, backgroundColor: theme.backgroundElement },
-                  focusedField === 'password' && [styles.inputWrapperFocused, { borderColor: theme.primary, backgroundColor: theme.background, shadowColor: theme.primary }],
-                  (passwordFormatError || showErrorBanner) && [styles.inputWrapperError, { borderColor: theme.error, backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.1)' : '#FFF9F9' }],
-                ]}
-              >
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={22}
-                  color={
-                    (passwordFormatError || showErrorBanner)
-                      ? theme.error
-                      : focusedField === 'password'
-                      ? theme.primary
-                      : theme.textSecondary
-                  }
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  ref={passwordRef}
-                  style={[styles.input, { color: theme.text }]}
-                  placeholder={t.enterPinPlaceholder}
-                  placeholderTextColor={isDarkMode ? '#7E7C9D' : '#A5A3C1'}
-                  value={password}
-                  onChangeText={(text) => handleTextInputChange('password', text)}
-                  keyboardType="number-pad"
-                  maxLength={8}
-                  secureTextEntry={!showPassword}
-                  editable={!isLoading}
-                  onFocus={() => setFocusedField('password')}
-                  onBlur={() => {
-                    setFocusedField(null);
-                    if (password.length > 0) {
-                      setPasswordTouched(true);
-                    }
-                  }}
-                />
-                <TouchableOpacity
-                  onPress={() => setShowPassword(!showPassword)}
-                  style={styles.eyeButton}
-                  disabled={isLoading}
-                >
-                  <Ionicons
-                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                    size={22}
-                    color="#A5A3C1"
-                  />
-                </TouchableOpacity>
-              </Pressable>
-              {passwordFormatError && (
-                <Text style={[styles.errorText, { color: theme.error }]}>{passwordFormatError}</Text>
-              )}
-            </View>
-
-          </View>
-        </ScrollView>
-
-        {/* Sticky Login Action Button & Sub-links at the bottom */}
-        <View style={[styles.footerContainer, { backgroundColor: theme.background, borderTopColor: theme.border }]}>
           <TouchableOpacity
-            style={[
-              styles.loginButton,
-              { backgroundColor: theme.primary, shadowColor: theme.primary },
-              !isFormValid && [styles.loginButtonDisabled, { backgroundColor: isDarkMode ? '#2A2A2A' : '#C6C5DB' }],
-            ]}
-            disabled={!isFormValid}
-            onPress={handleLogin}
-            activeOpacity={0.8}
+            onPress={() => setShowPassword(!showPassword)}
+            style={styles.eyeBtn}
           >
-            {isLoading ? (
-              <View style={styles.loadingRow}>
-                <ActivityIndicator size="small" color="#FFFFFF" />
-                <Text style={styles.loginButtonText}>{t.loggingIn}</Text>
-              </View>
-            ) : (
-              <Text style={styles.loginButtonText}>{t.loginButton}</Text>
-            )}
+            <Ionicons
+              name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+              size={20}
+              color="#C0C0C0"
+            />
           </TouchableOpacity>
-
-          {/* Sub-links */}
-          <View style={styles.linksRow}>
-            <TouchableOpacity onPress={() => router.push('/officer-verify')} disabled={isLoading}>
-              <Text style={[styles.linkText, { color: theme.primary }]}>{t.activateNewAccount}</Text>
-            </TouchableOpacity>
-
-            <View style={[styles.divider, { backgroundColor: theme.border }]} />
-
-            <TouchableOpacity onPress={handleForgotK2} disabled={isLoading}>
-              <Text style={[styles.linkText, { color: theme.primary }]}>{t.forgotK2Label}</Text>
-            </TouchableOpacity>
-          </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
+
+      {/* Login Button */}
+      <TouchableOpacity
+        style={[
+          styles.loginButton,
+          { backgroundColor: isFormValid ? theme.primary : '#E5E5E5' },
+        ]}
+        disabled={!isFormValid}
+        onPress={handleLogin}
+        activeOpacity={0.8}
+      >
+        {isLoading ? (
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        ) : (
+          <>
+            <Text style={[styles.loginButtonText, { color: isFormValid ? '#FFFFFF' : '#999' }]}>
+              {t.loginButton}
+            </Text>
+            <Ionicons name="arrow-forward" size={20} color={isFormValid ? '#FFFFFF' : '#999'} />
+          </>
+        )}
+      </TouchableOpacity>
+
+      {/* Number Pad */}
+      <View style={styles.numpad}>
+        {[[1, 2, 3], [4, 5, 6], [7, 8, 9]].map((row, rIdx) => (
+          <View key={rIdx} style={styles.numpadRow}>
+            {row.map((num) => (
+              <TouchableOpacity
+                key={num}
+                style={[styles.numKey, { width: KEY_SIZE, height: 56 }]}
+                disabled={isLoading}
+                onPress={() => handleNumPress(num)}
+                activeOpacity={0.4}
+              >
+                <Text style={styles.numKeyText}>{num}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ))}
+        <View style={styles.numpadRow}>
+          <View style={{ width: KEY_SIZE, height: 56 }} />
+          <TouchableOpacity
+            style={[styles.numKey, { width: KEY_SIZE, height: 56 }]}
+            disabled={isLoading}
+            onPress={() => handleNumPress(0)}
+            activeOpacity={0.4}
+          >
+            <Text style={styles.numKeyText}>0</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.numKey, { width: KEY_SIZE, height: 56 }]}
+            disabled={isLoading}
+            onPress={handleBackspace}
+            activeOpacity={0.4}
+          >
+            <Ionicons name="close" size={22} color="#666" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Footer Links */}
+      <View style={styles.linksRow}>
+        <TouchableOpacity onPress={() => router.push('/officer-verify')} disabled={isLoading}>
+          <Text style={[styles.linkText, { color: theme.primary }]}>{t.activateNewAccount}</Text>
+        </TouchableOpacity>
+
+        <View style={[styles.divider, { backgroundColor: '#E5E5E5' }]} />
+
+        <TouchableOpacity onPress={handleForgotK2} disabled={isLoading}>
+          <Text style={[styles.linkText, { color: theme.primary }]}>{t.forgotK2Label}</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
@@ -302,20 +261,13 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  keyboardAvoid: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: Spacing.xxl,
-    paddingBottom: Spacing.huge,
-  },
-  // Error Banner styling
+  // Error Banner
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 12,
     padding: Spacing.md,
     marginHorizontal: Spacing.xxl,
     marginTop: Spacing.xs,
@@ -341,82 +293,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  // Logo Container
-  logoContainer: {
-    flexDirection: 'row',
+  // Logo
+  logoSection: {
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.xs,
-    marginVertical: Spacing.sm,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.md,
   },
-  logoText: {
-    fontSize: 26,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-  },
-  logoTextAccent: {},
   brandSlogan: {
     fontSize: 12,
     fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: Spacing.md,
     letterSpacing: 0.5,
+    marginTop: 6,
   },
-  // Illustration
-  illustrationContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: Spacing.xs,
-  },
-  illustration: {
-    width: width * 0.75,
-    height: width * 0.5,
-  },
-  // Header texts
-  textContainer: {
-    alignItems: 'center',
-    marginBottom: Spacing.lg,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '800',
-    textAlign: 'center',
-    marginBottom: Spacing.xs,
-  },
-  subtitle: {
-    fontSize: 15,
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-  // Form layout
-  formContainer: {
-    gap: Spacing.lg,
-  },
-  fieldGroup: {
-    gap: Spacing.xs,
+  // Input
+  inputSection: {
+    paddingHorizontal: Spacing.xxl,
+    marginBottom: Spacing.md,
   },
   label: {
     fontSize: 14,
     fontWeight: '700',
-    marginLeft: Spacing.xs,
+    marginBottom: Spacing.xs,
   },
   inputWrapper: {
-    height: 60,
+    height: 52,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 16,
+    borderWidth: 1.5,
+    borderRadius: 10,
     paddingHorizontal: Spacing.md,
   },
-  inputWrapperFocused: {
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 1,
-  },
-  inputWrapperError: {},
   inputIcon: {
-    marginRight: Spacing.md,
+    marginRight: Spacing.sm,
   },
   input: {
     flex: 1,
@@ -424,50 +332,65 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '500',
   },
-  eyeButton: {
-    padding: Spacing.xs,
-  },
-  errorText: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginLeft: Spacing.xs,
-    marginTop: Spacing.xs,
-  },
-  // Footer / Buttons container
-  footerContainer: {
+  // PIN Display
+  pinSection: {
     paddingHorizontal: Spacing.xxl,
-    paddingVertical: Spacing.lg,
-    borderTopWidth: 1,
-    gap: Spacing.lg,
+    marginBottom: Spacing.md,
   },
+  pinDisplayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1.5,
+    borderBottomColor: '#E5E5E5',
+    paddingBottom: 10,
+  },
+  eyeBtn: {
+    padding: 4,
+  },
+  pinReveal: {
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 4,
+  },
+  // Login Button
   loginButton: {
-    height: 60,
-    borderRadius: 16,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  loginButtonDisabled: {
-    shadowOpacity: 0,
-    elevation: 0,
+    height: 52,
+    marginHorizontal: Spacing.xxl,
+    borderRadius: 8,
+    gap: 8,
+    marginBottom: Spacing.lg,
   },
   loginButtonText: {
-    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
-  loadingRow: {
-    flexDirection: 'row',
+  // Numpad
+  numpad: {
     alignItems: 'center',
-    gap: Spacing.sm,
+    width: '100%',
   },
+  numpadRow: {
+    flexDirection: 'row',
+  },
+  numKey: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  numKeyText: {
+    fontSize: 32,
+    fontWeight: '500',
+    color: '#333',
+  },
+  // Links
   linksRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: Spacing.lg,
   },
   linkText: {
     fontSize: 14,

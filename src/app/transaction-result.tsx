@@ -11,10 +11,9 @@ import {
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
 import { Spacing } from '../constants/theme';
-import { LogoMark } from '../components/Logo';
-import { BottomSkylineSvg } from '../components/BottomSkylineSvg';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
@@ -27,7 +26,6 @@ export default function TransactionResult() {
   const { language } = useLanguage();
   const t = translations[language];
 
-  // Retrieve navigation parameters passed from TransactionProcessing
   const params = useLocalSearchParams();
   const status = Array.isArray(params.status) ? params.status[0] : params.status || 'success';
   const receiverUsername = Array.isArray(params.receiverUsername) ? params.receiverUsername[0] : params.receiverUsername || 'N/A';
@@ -47,7 +45,6 @@ export default function TransactionResult() {
 
   const isSuccess = status === 'success';
 
-  // Map failure status codes to human-readable error reasons
   const getFailureReason = (code: string) => {
     if (errorReason) return errorReason;
     switch (code) {
@@ -66,20 +63,12 @@ export default function TransactionResult() {
     if (referenceNo === 'N/A') return;
     await Clipboard.setStringAsync(referenceNo);
     setCopied(true);
-    setTimeout(() => {
-      setCopied(false);
-    }, 2000);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const navigation = useNavigation();
 
   const handleBackToHome = () => {
-    try {
-      const state = navigation.getState();
-      const currentRoutes = state?.routes?.map((r: any) => r.name) || [];
-      console.log('[TX NAV BEFORE BACK TO HOME] Stack routes:', currentRoutes);
-    } catch (e) {}
-
     if (router.canDismiss()) {
       router.dismissAll();
     }
@@ -87,82 +76,65 @@ export default function TransactionResult() {
   };
 
   const handleViewHistory = () => {
-    try {
-      const state = navigation.getState();
-      const currentRoutes = state?.routes?.map((r: any) => r.name) || [];
-      console.log('[TX NAV BEFORE VIEW HISTORY] Stack routes:', currentRoutes);
-    } catch (e) {}
-
     if (router.canDismiss()) {
       router.dismissAll();
     }
     router.push('/history');
   };
 
-  const accentColor = isSuccess ? theme.success : theme.error;
+  const gradientColors = isSuccess
+    ? (theme.gradient as readonly [string, string, ...string[]])
+    : ([theme.error, '#FF6B6B'] as readonly [string, string]);
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      <StatusBar barStyle="light-content" />
 
-      {/* Top Logo Mark & Wordmark */}
-      <View style={[styles.logoContainer, { borderBottomColor: theme.border }]}>
-        <LogoMark size={32} />
-        <View style={styles.logoTextWrapper}>
-          <Text style={[styles.logoText, { color: theme.text }]}>
-            D<Text style={[styles.logoTextAccent, { color: theme.primary }]}>PT</Text>
-          </Text>
-          <Text style={[styles.logoSlogan, { color: theme.textSecondary }]}>
-            Digital Pocket Transaction
-          </Text>
+      {/* Gradient Header */}
+      <LinearGradient
+        colors={gradientColors}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.gradientHeader}
+      >
+        {/* Decorative circle */}
+        <View style={styles.headerDecorCircle} />
+
+        {/* Status Icon */}
+        <View style={styles.statusIconWrapper}>
+          <View style={styles.statusIconInner}>
+            <Ionicons
+              name={isSuccess ? 'checkmark' : 'close'}
+              size={40}
+              color="#FFFFFF"
+            />
+          </View>
         </View>
-      </View>
+
+        {/* Status Text */}
+        <Text style={styles.statusTitle}>
+          {isSuccess ? t.transferSuccessful : t.transferFailed}
+        </Text>
+        <Text style={styles.statusSubtitle}>
+          {isSuccess ? t.moneySentSuccess : t.couldNotCompleteTx}
+        </Text>
+
+        {/* Amount */}
+        <Text style={styles.amountDisplay}>
+          ৳ {parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+        </Text>
+      </LinearGradient>
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews={false}
       >
-        {/* Status Circular Badges */}
-        <View style={styles.statusBadgeSection}>
-          <View style={styles.badgeContainer}>
-            {/* Concentric ripple rings */}
-            <View style={[styles.outerRipple, { backgroundColor: isSuccess ? 'rgba(9, 196, 135, 0.04)' : 'rgba(255, 56, 56, 0.04)' }]} />
-            <View style={[styles.middleRipple, { backgroundColor: isSuccess ? 'rgba(9, 196, 135, 0.08)' : 'rgba(255, 56, 56, 0.08)' }]} />
-            <View style={[styles.innerBadgeCircle, { backgroundColor: accentColor, shadowColor: theme.text }]}>
-              <Ionicons
-                name={isSuccess ? 'checkmark' : 'close'}
-                size={44}
-                color="#FFFFFF"
-              />
-            </View>
-
-            {/* Decorative background confetti dots */}
-            <View style={[styles.confettiDot, styles.dot1, { backgroundColor: accentColor }]} />
-            <View style={[styles.confettiDot, styles.dot2, { backgroundColor: accentColor }]} />
-            <View style={[styles.confettiDot, styles.dot3, { backgroundColor: accentColor }]} />
-            <View style={[styles.confettiDot, styles.dot4, { backgroundColor: accentColor }]} />
-            <View style={[styles.confettiSparkle, styles.sparkle1]}>
-              <Ionicons name="sparkles" size={14} color={accentColor} />
-            </View>
-            <View style={[styles.confettiSparkle, styles.sparkle2]}>
-              <Ionicons name="sparkles" size={12} color={accentColor} />
-            </View>
-          </View>
-
-          {/* Heading Status Texts */}
-          <Text style={[styles.statusTitle, { color: theme.text }]}>
-            {isSuccess ? t.transferSuccessful : t.transferFailed}
-          </Text>
-          <Text style={[styles.statusSubtitle, { color: theme.textSecondary }]}>
-            {isSuccess ? t.moneySentSuccess : t.couldNotCompleteTx}
-          </Text>
-        </View>
-
-        {/* Failed-only Reason Card */}
+        {/* Failed Reason Card */}
         {!isSuccess && (
-          <View style={[styles.reasonCard, { backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.1)' : '#FFF5F5', borderColor: theme.error }]}>
-            <Ionicons name="alert-circle" size={24} color={theme.error} style={styles.reasonIcon} />
+          <View style={[styles.reasonCard, { backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.08)' : '#FFF5F5', borderColor: isDarkMode ? 'rgba(255, 56, 56, 0.2)' : '#FFD2D2' }]}>
+            <View style={[styles.reasonIconCircle, { backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.15)' : '#FFE8E8' }]}>
+              <Ionicons name="alert-circle" size={20} color={theme.error} />
+            </View>
             <View style={styles.reasonTextContainer}>
               <Text style={[styles.reasonLabel, { color: theme.error }]}>{t.reasonLabel}</Text>
               <Text style={[styles.reasonValue, { color: theme.text }]}>{getFailureReason(status)}</Text>
@@ -171,195 +143,154 @@ export default function TransactionResult() {
         )}
 
         {/* Details Card */}
-        <View style={[styles.detailsCard, { backgroundColor: theme.cardBg, borderColor: theme.border, shadowColor: theme.primary }]}>
-          {/* Header Row */}
-          <View style={[styles.detailsHeader, { borderBottomColor: theme.border }]}>
-            <View style={[styles.detailsHeaderIconWrapper, { backgroundColor: isSuccess ? (isDarkMode ? 'rgba(9,196,135,0.1)' : '#E6FFF0') : (isDarkMode ? 'rgba(255,56,56,0.1)' : '#FFF0F0') }]}>
-              <Ionicons
-                name="document-text-outline"
-                size={18}
-                color={accentColor}
-              />
+        <View style={[styles.detailsCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+          {/* Amount Row */}
+          <View style={[styles.detailRow, { borderBottomColor: theme.border }]}>
+            <View style={styles.detailLeft}>
+              <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                <Text style={[styles.detailCurrency, { color: theme.textSecondary }]}>৳</Text>
+              </View>
+              <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Amount' : 'পরিমাণ'}</Text>
             </View>
-            <Text style={[styles.detailsHeaderTitle, { color: theme.text }]}>{t.transactionDetailsLabel}</Text>
+            <Text style={[styles.detailValueAmount, { color: isSuccess ? theme.success : theme.error }]}>
+              ৳ {parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </Text>
           </View>
 
-          {/* Details Rows */}
-          <View style={styles.detailsBody}>
-            {/* Row 1: Amount */}
-            <View style={styles.detailsRow}>
-              <View style={styles.rowLabelContainer}>
-                <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                  <Text style={[styles.currencySymbol, { color: theme.textSecondary }]}>৳</Text>
+          {/* Type-specific rows */}
+          {type === 'mobile_recharge' ? (
+            <>
+              <View style={[styles.detailRow, { borderBottomColor: theme.border }]}>
+                <View style={styles.detailLeft}>
+                  <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                    <Ionicons name="phone-portrait-outline" size={14} color={theme.textSecondary} />
+                  </View>
+                  <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{t.mobileNumberLabel || 'Mobile'}</Text>
                 </View>
-                <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Amount' : 'পরিমাণ'}</Text>
+                <Text style={[styles.detailValue, { color: theme.text }]}>{mobileNumber}</Text>
               </View>
-              <Text style={[styles.rowValueAmount, { color: accentColor }]}>
-                ৳ {parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              <View style={[styles.detailRow, { borderBottomColor: theme.border }]}>
+                <View style={styles.detailLeft}>
+                  <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                    <Ionicons name="flash-outline" size={14} color={theme.textSecondary} />
+                  </View>
+                  <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{t.selectOperatorLabel || 'Operator'}</Text>
+                </View>
+                <Text style={[styles.detailValue, { color: theme.text }]}>{operator}</Text>
+              </View>
+            </>
+          ) : type === 'merchant_payment' ? (
+            <View style={[styles.detailRow, { borderBottomColor: theme.border }]}>
+              <View style={styles.detailLeft}>
+                <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                  <Ionicons name="storefront-outline" size={14} color={theme.textSecondary} />
+                </View>
+                <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Merchant' : 'মার্চেন্ট'}</Text>
+              </View>
+              <Text style={[styles.detailValue, { color: theme.text }]}>{merchantName || receiverUsername}</Text>
+            </View>
+          ) : type === 'bill_payment' ? (
+            <>
+              <View style={[styles.detailRow, { borderBottomColor: theme.border }]}>
+                <View style={styles.detailLeft}>
+                  <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                    <Ionicons name="receipt-outline" size={14} color={theme.textSecondary} />
+                  </View>
+                  <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Biller' : 'বিল প্রতিষ্ঠান'}</Text>
+                </View>
+                <Text style={[styles.detailValue, { color: theme.text }]}>{billerName || receiverUsername}</Text>
+              </View>
+              {billerAccountNo ? (
+                <View style={[styles.detailRow, { borderBottomColor: theme.border }]}>
+                  <View style={styles.detailLeft}>
+                    <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                      <Ionicons name="card-outline" size={14} color={theme.textSecondary} />
+                    </View>
+                    <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Account' : 'একাউন্ট'}</Text>
+                  </View>
+                  <Text style={[styles.detailValue, { color: theme.text }]}>{billerAccountNo}</Text>
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <View style={[styles.detailRow, { borderBottomColor: theme.border }]}>
+              <View style={styles.detailLeft}>
+                <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                  <Ionicons name="person-outline" size={14} color={theme.textSecondary} />
+                </View>
+                <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{t.sentToLabel}</Text>
+              </View>
+              <Text style={[styles.detailValue, { color: theme.text }]}>{receiverUsername}</Text>
+            </View>
+          )}
+
+          {/* Date & Time */}
+          <View style={[styles.detailRow, { borderBottomColor: theme.border }]}>
+            <View style={styles.detailLeft}>
+              <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                <Ionicons name="calendar-outline" size={14} color={theme.textSecondary} />
+              </View>
+              <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{t.dateTimeLabel}</Text>
+            </View>
+            <Text style={[styles.detailValue, { color: theme.text }]}>{dateTime}</Text>
+          </View>
+
+          {/* Reference */}
+          <View style={[styles.detailRow, styles.lastRow]}>
+            <View style={styles.detailLeft}>
+              <View style={[styles.detailIconCircle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F4F3F8' }]}>
+                <MaterialCommunityIcons name="pound" size={14} color={theme.textSecondary} />
+              </View>
+              <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{t.transactionIdLabel}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={handleCopyToClipboard}
+              style={styles.copyRow}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.detailValueRef, { color: theme.text }]} numberOfLines={1} ellipsizeMode="middle">
+                {referenceNo}
               </Text>
-            </View>
-
-            {type === 'mobile_recharge' ? (
-              <>
-                {/* Mobile Number Row */}
-                <View style={styles.detailsRow}>
-                  <View style={styles.rowLabelContainer}>
-                    <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                      <Ionicons name="phone-portrait-outline" size={14} color={theme.textSecondary} />
-                    </View>
-                    <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{t.mobileNumberLabel || 'Mobile Number'}</Text>
-                  </View>
-                  <Text style={[styles.rowValueText, { color: theme.text }]}>{mobileNumber}</Text>
+              {copied ? (
+                <View style={styles.copiedBadge}>
+                  <Text style={[styles.copiedText, { color: isSuccess ? theme.success : theme.error }]}>{t.copiedFeedback}</Text>
                 </View>
-
-                {/* Operator Row */}
-                <View style={styles.detailsRow}>
-                  <View style={styles.rowLabelContainer}>
-                    <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                      <Ionicons name="flash-outline" size={14} color={theme.textSecondary} />
-                    </View>
-                    <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{t.selectOperatorLabel || 'Operator'}</Text>
-                  </View>
-                  <Text style={[styles.rowValueText, { color: theme.text }]}>{operator}</Text>
-                </View>
-              </>
-            ) : type === 'merchant_payment' ? (
-              <View style={styles.detailsRow}>
-                <View style={styles.rowLabelContainer}>
-                  <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                    <Ionicons name="cart-outline" size={14} color={theme.textSecondary} />
-                  </View>
-                  <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Merchant' : 'মার্চেন্ট'}</Text>
-                </View>
-                <Text style={[styles.rowValueText, { color: theme.text }]}>{merchantName || receiverUsername}</Text>
-              </View>
-            ) : type === 'bill_payment' ? (
-              <>
-                <View style={styles.detailsRow}>
-                  <View style={styles.rowLabelContainer}>
-                    <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                      <Ionicons name="receipt-outline" size={14} color={theme.textSecondary} />
-                    </View>
-                    <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Biller' : 'বিল প্রতিষ্ঠান'}</Text>
-                  </View>
-                  <Text style={[styles.rowValueText, { color: theme.text }]}>{billerName || receiverUsername}</Text>
-                </View>
-                {billerAccountNo ? (
-                  <View style={styles.detailsRow}>
-                    <View style={styles.rowLabelContainer}>
-                      <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                        <Ionicons name="card-outline" size={14} color={theme.textSecondary} />
-                      </View>
-                      <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Account No' : 'একাউন্ট নং'}</Text>
-                    </View>
-                    <Text style={[styles.rowValueText, { color: theme.text }]}>{billerAccountNo}</Text>
-                  </View>
-                ) : null}
-              </>
-            ) : (
-              /* Standard Receiver Row */
-              <View style={styles.detailsRow}>
-                <View style={styles.rowLabelContainer}>
-                  <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                    <Ionicons name="person-outline" size={14} color={theme.textSecondary} />
-                  </View>
-                  <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{t.sentToLabel}</Text>
-                </View>
-                <Text style={[styles.rowValueText, { color: theme.text }]}>{receiverUsername}</Text>
-              </View>
-            )}
-
-            {/* Row 3: Date & Time */}
-            <View style={styles.detailsRow}>
-              <View style={styles.rowLabelContainer}>
-                <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                  <Ionicons name="calendar-outline" size={14} color={theme.textSecondary} />
-                </View>
-                <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{t.dateTimeLabel}</Text>
-              </View>
-              <Text style={[styles.rowValueText, { color: theme.text }]}>{dateTime}</Text>
-            </View>
-
-            {/* Row 4: Reference Number */}
-            <View style={[styles.detailsRow, styles.lastRow]}>
-              <View style={styles.rowLabelContainer}>
-                <View style={[styles.rowIconWrapper, { backgroundColor: theme.backgroundElement }]}>
-                  <MaterialCommunityIcons name="pound" size={14} color={theme.textSecondary} />
-                </View>
-                <Text style={[styles.rowLabel, { color: theme.textSecondary }]}>{t.transactionIdLabel}</Text>
-              </View>
-              <View style={styles.referenceContainer}>
-                <Text style={[styles.rowValueReference, { color: theme.text }]} numberOfLines={1} ellipsizeMode="middle">
-                  {referenceNo}
-                </Text>
-                <TouchableOpacity
-                  onPress={handleCopyToClipboard}
-                  style={styles.copyButton}
-                  activeOpacity={0.7}
-                >
-                  {copied ? (
-                    <View style={styles.copiedBadge}>
-                      <Text style={[styles.copiedText, { color: accentColor }]}>{t.copiedFeedback}</Text>
-                      <Ionicons name="checkmark-circle" size={16} color={accentColor} />
-                    </View>
-                  ) : (
-                    <Ionicons
-                      name="copy-outline"
-                      size={18}
-                      color={accentColor}
-                    />
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
+              ) : (
+                <Ionicons name="copy-outline" size={16} color={isSuccess ? theme.success : theme.error} />
+              )}
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Security / Suggestion Banners */}
-        {isSuccess ? (
-          <View style={[styles.infoBanner, styles.successBanner, { backgroundColor: isDarkMode ? 'rgba(9, 196, 135, 0.05)' : '#F3FBF7', borderColor: isDarkMode ? 'rgba(9, 196, 135, 0.2)' : '#D6F5E3' }]}>
-            <View style={[styles.bannerIconWrapper, { backgroundColor: isDarkMode ? '#2C2754' : '#E6FFF0' }]}>
-              <Ionicons name="shield-checkmark" size={18} color={theme.success} />
-            </View>
-            <Text style={[styles.bannerText, { color: theme.text }]}>
-              {language === 'en' ? 'Your transfer is secure and encrypted end-to-end.' : 'আপনার স্থানান্তর সম্পূর্ণ নিরাপদ এবং এনক্রিপ্ট করা।'}
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.infoBanner, styles.failedBanner, { backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.05)' : '#FFF5F5', borderColor: isDarkMode ? 'rgba(255, 56, 56, 0.2)' : '#FFD2D2' }]}>
-            <View style={[styles.bannerIconWrapper, styles.failedBannerIconWrapper, { backgroundColor: isDarkMode ? '#2C2754' : '#FFF0F0' }]}>
-              <Ionicons name="information-circle-outline" size={18} color={theme.error} />
-            </View>
-            <Text style={[styles.bannerText, { color: theme.text }]}>
-              {language === 'en' ? 'Please check your balance and try again, or use a different payment method.' : 'অনুগ্রহ করে আপনার ব্যালেন্স চেক করে আবার চেষ্টা করুন, অথবা অন্য পেমেন্ট পদ্ধতি ব্যবহার করুন।'}
-            </Text>
-          </View>
-        )}
+        {/* Security Banner */}
+        <View style={[styles.securityBanner, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : '#F8F7FF', borderColor: theme.border }]}>
+          <Ionicons name="shield-checkmark" size={16} color={theme.primary} />
+          <Text style={[styles.securityText, { color: theme.textSecondary }]}>
+            {language === 'en' ? 'End-to-end encrypted transaction' : 'এন্ড-টু-এন্ড এনক্রিপ্টেড লেনদেন'}
+          </Text>
+        </View>
 
-        {/* Sticky Action Buttons */}
-        <View style={styles.actionButtonsContainer}>
+        {/* Action Buttons */}
+        <View style={styles.actionsContainer}>
           <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: theme.primary, shadowColor: theme.primary }]}
+            style={[styles.primaryButton, { backgroundColor: theme.primary }]}
             onPress={handleBackToHome}
             activeOpacity={0.8}
           >
-            <Ionicons name="home" size={20} color="#FFFFFF" style={styles.buttonIcon} />
+            <Ionicons name="home" size={20} color="#FFFFFF" style={styles.btnIcon} />
             <Text style={styles.primaryButtonText}>{t.backToHomeButton}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.secondaryButton, { borderColor: theme.primary, backgroundColor: theme.background }]}
+            style={[styles.secondaryButton, { borderColor: theme.border, backgroundColor: theme.cardBg }]}
             onPress={handleViewHistory}
             activeOpacity={0.7}
           >
-            <Ionicons name="time-outline" size={20} color={theme.primary} style={styles.buttonIcon} />
-            <Text style={[styles.secondaryButtonText, { color: theme.primary }]}>{t.viewHistoryButton}</Text>
+            <Ionicons name="time-outline" size={20} color={theme.textSecondary} style={styles.btnIcon} />
+            <Text style={[styles.secondaryButtonText, { color: theme.textSecondary }]}>{t.viewHistoryButton}</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
-
-      {/* City Skyline Wave Vector Illustration */}
-      <BottomSkylineSvg color={accentColor} />
     </SafeAreaView>
   );
 }
@@ -367,263 +298,195 @@ export default function TransactionResult() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    justifyContent: 'space-between',
   },
-  scrollContent: {
-    paddingHorizontal: Spacing.xxl,
-    paddingBottom: Spacing.lg,
-  },
-  // Logo Header styling
-  logoContainer: {
-    flexDirection: 'row',
+  // Gradient Header
+  gradientHeader: {
+    paddingTop: Spacing.xl,
+    paddingBottom: Spacing.xxl,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.sm,
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  logoTextWrapper: {
-    alignItems: 'flex-start',
-  },
-  logoText: {
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-  },
-  logoTextAccent: {},
-  logoSlogan: {
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-  },
-  // Status Badge Section
-  statusBadgeSection: {
-    alignItems: 'center',
-    marginTop: Spacing.xl,
-    marginBottom: Spacing.lg,
-  },
-  badgeContainer: {
-    width: 140,
-    height: 140,
-    alignItems: 'center',
-    justifyContent: 'center',
     position: 'relative',
+    overflow: 'hidden',
+  },
+  headerDecorCircle: {
+    position: 'absolute',
+    top: -40,
+    right: -40,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  statusIconWrapper: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: Spacing.md,
   },
-  outerRipple: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
-    position: 'absolute',
-  },
-  middleRipple: {
-    width: 105,
-    height: 105,
-    borderRadius: 52.5,
-    position: 'absolute',
-  },
-  innerBadgeCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+  statusIconInner: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 3,
-    zIndex: 1,
   },
-  // Confetti positions
-  confettiDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    position: 'absolute',
-    opacity: 0.7,
-  },
-  dot1: { left: 10, top: 40 },
-  dot2: { right: 15, top: 30 },
-  dot3: { left: 25, bottom: 25 },
-  dot4: { right: 20, bottom: 35 },
-  confettiSparkle: {
-    position: 'absolute',
-    opacity: 0.8,
-  },
-  sparkle1: { right: 8, top: 58 },
-  sparkle2: { left: 8, bottom: 58 },
-  // Headers
   statusTitle: {
-    fontSize: 24,
+    color: '#FFFFFF',
+    fontSize: 22,
     fontWeight: '800',
-    textAlign: 'center',
-    marginBottom: Spacing.xs,
+    marginBottom: 4,
   },
   statusSubtitle: {
+    color: 'rgba(255, 255, 255, 0.8)',
     fontSize: 14,
-    textAlign: 'center',
     fontWeight: '500',
+    marginBottom: Spacing.lg,
   },
-  // Failed reason block
+  amountDisplay: {
+    color: '#FFFFFF',
+    fontSize: 34,
+    fontWeight: '800',
+    letterSpacing: -1,
+    marginBottom: Spacing.lg,
+  },
+  // Scroll Content
+  scrollContent: {
+    paddingHorizontal: Spacing.xxl,
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.huge,
+  },
+  // Failed Reason
   reasonCard: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderRadius: 16,
     padding: Spacing.md,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
     gap: Spacing.sm,
   },
-  reasonIcon: {
-    alignSelf: 'flex-start',
-    marginTop: 2,
+  reasonIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reasonTextContainer: {
     flex: 1,
+    gap: 2,
   },
   reasonLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   reasonValue: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    marginTop: 1,
+    lineHeight: 18,
   },
   // Details Card
   detailsCard: {
     borderWidth: 1,
     borderRadius: 20,
-    padding: Spacing.lg,
-    marginBottom: Spacing.lg,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.02,
-    shadowRadius: 10,
-    elevation: 2,
+    overflow: 'hidden',
+    marginBottom: Spacing.md,
   },
-  detailsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    paddingBottom: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  detailsHeaderIconWrapper: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  detailsHeaderTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  detailsBody: {
-    paddingTop: Spacing.md,
-    gap: Spacing.md,
-  },
-  detailsRow: {
+  detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: Spacing.lg,
+    borderBottomWidth: 1,
   },
   lastRow: {
-    alignItems: 'center',
+    borderBottomWidth: 0,
   },
-  rowLabelContainer: {
+  detailLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
-  },
-  rowIconWrapper: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  currencySymbol: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  rowLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  rowValueAmount: {
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  rowValueText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  referenceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    maxWidth: width * 0.45,
-  },
-  rowValueReference: {
-    fontSize: 13,
-    fontWeight: '700',
     flex: 1,
   },
-  copyButton: {
-    padding: Spacing.xs,
-  },
-  copiedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  copiedText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  // Info Banners
-  infoBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: Spacing.md,
-    marginBottom: Spacing.xl,
-    gap: Spacing.sm,
-  },
-  successBanner: {},
-  failedBanner: {},
-  bannerIconWrapper: {
+  detailIconCircle: {
     width: 28,
     height: 28,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  failedBannerIconWrapper: {},
-  bannerText: {
+  detailCurrency: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  detailLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  detailValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'right',
+    flex: 1,
+  },
+  detailValueAmount: {
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+  detailValueRef: {
     fontSize: 12,
     fontWeight: '600',
     flex: 1,
-    lineHeight: 16,
+    textAlign: 'right',
+    marginRight: Spacing.xs,
   },
-  // Action Buttons
-  actionButtonsContainer: {
-    gap: Spacing.md,
-    marginBottom: Spacing.md,
+  copyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  copiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  copiedText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  // Security Banner
+  securityBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.sm,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: Spacing.xl,
+  },
+  securityText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  // Actions
+  actionsContainer: {
+    gap: Spacing.sm,
   },
   primaryButton: {
-    height: 60,
+    height: 56,
     borderRadius: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 4,
   },
   primaryButtonText: {
     color: '#FFFFFF',
@@ -631,9 +494,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   secondaryButton: {
-    height: 60,
-    borderWidth: 1.5,
+    height: 56,
     borderRadius: 16,
+    borderWidth: 1.5,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -642,7 +505,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  buttonIcon: {
+  btnIcon: {
     marginRight: Spacing.sm,
   },
 });

@@ -15,6 +15,7 @@ export interface MappedTransaction {
   iconColor: string;
   iconBg: string;
   receiver: string;
+  isOfflinePending?: boolean;
 }
 
 export function mapApiTransaction(
@@ -35,7 +36,7 @@ export function mapApiTransaction(
   let isOutgoing = false;
   const typeLower = tx.type?.toLowerCase() || '';
 
-  if (typeLower === 'sent' || typeLower === 'send' || typeLower === 'send_money') {
+  if (typeLower === 'sent' || typeLower === 'send' || typeLower === 'send_money' || typeLower === 'user_transfer') {
     isOutgoing = true;
   } else if (typeLower === 'received' || typeLower === 'receive') {
     isOutgoing = false;
@@ -59,30 +60,43 @@ export function mapApiTransaction(
   let iconColor = primaryColor;
   let displayTitle = '';
 
-  if (typeLower === 'sent' || typeLower === 'send' || typeLower === 'send_money' || typeLower === 'received' || typeLower === 'receive') {
-    iconName = isOutgoing ? 'send-outline' : 'arrow-down-outline';
-    iconBg = isOutgoing ? primaryLightColor : 'rgba(16, 185, 129, 0.12)';
-    iconColor = isOutgoing ? primaryColor : successColor;
-    displayTitle = isOutgoing
-      ? `${t.sendMoney || 'Send Money'} to ${displayCounterpart}`
-      : `${language === 'en' ? 'Receive Money' : 'টাকা গ্রহণ'} from ${displayCounterpart}`;
+  if (typeLower === 'sent' || typeLower === 'send' || typeLower === 'send_money' || typeLower === 'user_transfer') {
+    iconName = 'send-outline';
+    iconBg = primaryLightColor;
+    iconColor = primaryColor;
+    displayTitle = `${t.sendMoney || 'Send Money'} to ${displayCounterpart}`;
+  } else if (typeLower === 'received' || typeLower === 'receive') {
+    iconName = 'arrow-down-outline';
+    iconBg = 'rgba(16, 185, 129, 0.12)';
+    iconColor = successColor;
+    displayTitle = `${language === 'en' ? 'Receive Money' : 'টাকা গ্রহণ'} from ${displayCounterpart}`;
   } else if (typeLower === 'recharge' || typeLower === 'mobile_recharge') {
     iconName = 'flash-outline';
     iconBg = '#FFF9E6';
     iconColor = '#FF9500';
-    displayTitle = `${t.mobileRecharge || 'Mobile Recharge'} (${tx.operator || tx.mobileNumber || ''})`;
+    displayTitle = `${t.mobileRecharge || 'Mobile Recharge'} (${tx.operator || tx.mobileNumber || displayCounterpart})`;
   } else if (typeLower === 'bill' || typeLower === 'bill_payment') {
     iconName = 'document-text-outline';
     iconBg = 'rgba(239, 68, 68, 0.12)';
     iconColor = errorColor;
-    displayTitle = `${t.billPayment || 'Bill Payment'} (${tx.billerName || ''})`;
+    displayTitle = `${t.billPayment || 'Bill Payment'} (${tx.billerName || displayCounterpart})`;
+  } else if (typeLower === 'merchant_payment') {
+    iconName = 'storefront-outline';
+    iconBg = 'rgba(255, 149, 0, 0.12)';
+    iconColor = '#FF9500';
+    displayTitle = `${language === 'en' ? 'Merchant Payment' : 'মার্চেন্ট পেমেন্ট'} to ${tx.merchantName || displayCounterpart}`;
+  } else if (typeLower === 'qr_payment') {
+    iconName = 'qr-code-outline';
+    iconBg = primaryLightColor;
+    iconColor = primaryColor;
+    displayTitle = `${language === 'en' ? 'QR Payment' : 'QR পেমেন্ট'} to ${displayCounterpart}`;
   } else {
     iconName = isOutgoing ? 'arrow-up-outline' : 'arrow-down-outline';
     iconBg = isOutgoing ? primaryLightColor : 'rgba(16, 185, 129, 0.12)';
     iconColor = isOutgoing ? primaryColor : successColor;
     displayTitle = isOutgoing
-      ? `Payment to ${displayCounterpart}`
-      : `Payment from ${displayCounterpart}`;
+      ? `${language === 'en' ? 'Payment' : 'পেমেন্ট'} to ${displayCounterpart}`
+      : `${language === 'en' ? 'Payment' : 'পেমেন্ট'} from ${displayCounterpart}`;
   }
 
   let formattedTime = tx.created_at || tx.timestamp || 'N/A';
@@ -109,7 +123,22 @@ export function mapApiTransaction(
   }
 
   const isTxSuccess = tx.status === 'success' || tx.status === 'Successful';
+  const isOfflinePending = String(tx.reference || tx.id || '').startsWith('OFF-');
   const amountVal = parseFloat(tx.amount || 0);
+
+  let displayStatus: string;
+  let displayStatusEnglish: 'Successful' | 'Failed';
+
+  if (isOfflinePending && isTxSuccess) {
+    displayStatus = language === 'en' ? 'Offline' : 'অফলাইন';
+    displayStatusEnglish = 'Successful'; // placeholder, not used for offline
+  } else if (isTxSuccess) {
+    displayStatus = language === 'en' ? 'Successful' : 'সফল';
+    displayStatusEnglish = 'Successful';
+  } else {
+    displayStatus = language === 'en' ? 'Failed' : 'ব্যর্থ';
+    displayStatusEnglish = 'Failed';
+  }
 
   return {
     id: String(tx.id || Math.random()),
@@ -119,10 +148,8 @@ export function mapApiTransaction(
     amount: `${isOutgoing ? '-' : '+'} ৳${amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
     amountVal,
     isOutgoing,
-    status: isTxSuccess
-      ? (language === 'en' ? 'Successful' : 'সফল')
-      : (language === 'en' ? 'Failed' : 'ব্যর্থ'),
-    statusEnglish: isTxSuccess ? 'Successful' : 'Failed',
+    status: displayStatus,
+    statusEnglish: displayStatusEnglish,
     rawStatus: tx.status,
     referenceNo: tx.reference || tx.referenceNo || 'N/A',
     errorCode: tx.failure_reason || tx.errorCode,
@@ -130,5 +157,6 @@ export function mapApiTransaction(
     iconColor,
     iconBg,
     receiver: displayCounterpart,
+    isOfflinePending,
   };
 }

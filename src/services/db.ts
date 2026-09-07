@@ -67,6 +67,11 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
             status TEXT,
             raw_json TEXT
           );
+          CREATE TABLE IF NOT EXISTS user_settings (
+            username TEXT PRIMARY KEY,
+            profile_image TEXT,
+            display_name TEXT
+          );
         `);
 
         // Schema migrations for existing tables
@@ -78,6 +83,9 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
         } catch (e) {}
         try {
           await db.execAsync(`ALTER TABLE cached_notifications ADD COLUMN username TEXT;`);
+        } catch (e) {}
+        try {
+          await db.execAsync(`ALTER TABLE user_settings ADD COLUMN display_name TEXT;`);
         } catch (e) {}
 
         return db;
@@ -416,5 +424,82 @@ export async function removePendingOfflineTransaction(id: string): Promise<void>
     await db.runAsync('DELETE FROM pending_offline_transactions WHERE id = ?', [id]);
   } catch (error) {
     console.warn('Failed to delete pending offline transaction:', error);
+  }
+}
+
+/**
+ * Save profile image (base64) for a user.
+ */
+export async function saveProfileImage(username: string, base64Image: string): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO user_settings (username, profile_image) VALUES (?, ?)`,
+      [username, base64Image]
+    );
+  } catch (error) {
+    console.warn('Failed to save profile image:', error);
+  }
+}
+
+/**
+ * Get profile image (base64) for a user.
+ */
+export async function getProfileImage(username: string): Promise<string | null> {
+  try {
+    const db = await getDb();
+    const row = await db.getFirstAsync<{ profile_image: string }>(
+      'SELECT profile_image FROM user_settings WHERE username = ?',
+      [username]
+    );
+    return row?.profile_image || null;
+  } catch (error) {
+    console.warn('Failed to get profile image:', error);
+    return null;
+  }
+}
+
+/**
+ * Delete profile image for a user.
+ */
+export async function deleteProfileImage(username: string): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.runAsync('DELETE FROM user_settings WHERE username = ?', [username]);
+  } catch (error) {
+    console.warn('Failed to delete profile image:', error);
+  }
+}
+
+/**
+ * Save display name for a user.
+ */
+export async function saveDisplayName(username: string, displayName: string): Promise<void> {
+  try {
+    const db = await getDb();
+    await db.runAsync(
+      `INSERT INTO user_settings (username, display_name) VALUES (?, ?)
+       ON CONFLICT(username) DO UPDATE SET display_name = excluded.display_name`,
+      [username, displayName]
+    );
+  } catch (error) {
+    console.warn('Failed to save display name:', error);
+  }
+}
+
+/**
+ * Get display name for a user.
+ */
+export async function getDisplayName(username: string): Promise<string | null> {
+  try {
+    const db = await getDb();
+    const row = await db.getFirstAsync<{ display_name: string }>(
+      'SELECT display_name FROM user_settings WHERE username = ?',
+      [username]
+    );
+    return row?.display_name || null;
+  } catch (error) {
+    console.warn('Failed to get display name:', error);
+    return null;
   }
 }

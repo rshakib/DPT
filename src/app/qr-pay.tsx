@@ -81,11 +81,24 @@ export default function QRPay() {
             },
           });
         } else {
-          Alert.alert(
-            language === 'en' ? 'Receiver Not Found' : 'গ্রাহক পাওয়া যায়নি',
-            result.message || (language === 'en' ? 'User does not exist in DPT.' : 'DPT-তে ব্যবহারকারী খুঁজে পাওয়া যায়নি।'),
-            [{ text: 'OK', onPress: () => setScanned(false) }]
-          );
+          const errorMsg = (result.message || '').toLowerCase();
+          const isNetworkError = errorMsg.includes('network') || errorMsg.includes('fetch') || errorMsg.includes('connection failed');
+          if (isNetworkError) {
+            // Offline: allow proceeding optimistically (transfer will be queued at execution)
+            router.replace({
+              pathname: '/qr-amount',
+              params: {
+                merchantName: username,
+                merchantHandle: `@${username}`,
+              },
+            });
+          } else {
+            Alert.alert(
+              language === 'en' ? 'Receiver Not Found' : 'গ্রাহক পাওয়া যায়নি',
+              result.message || (language === 'en' ? 'User does not exist in DPT.' : 'DPT-তে ব্যবহারকারী খুঁজে পাওয়া যায়নি।'),
+              [{ text: 'OK', onPress: () => setScanned(false) }]
+            );
+          }
         }
       } else {
         Alert.alert(
@@ -144,7 +157,23 @@ export default function QRPay() {
         });
       }, 500);
     } else {
-      setManualValidationError(result.message || t.receiverNotFoundMsg);
+      const errorMsg = (result.message || '').toLowerCase();
+      const isNetworkError = errorMsg.includes('network') || errorMsg.includes('fetch') || errorMsg.includes('connection failed');
+      if (isNetworkError) {
+        // Offline: allow proceeding optimistically (transfer will be queued at execution)
+        setVerifiedManualReceiver(`@${cleaned}`);
+        setTimeout(() => {
+          router.push({
+            pathname: '/qr-amount',
+            params: {
+              merchantName: cleaned,
+              merchantHandle: `@${cleaned}`,
+            },
+          });
+        }, 500);
+      } else {
+        setManualValidationError(result.message || t.receiverNotFoundMsg);
+      }
     }
   };
 

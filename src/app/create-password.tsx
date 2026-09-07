@@ -25,6 +25,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAppLock } from '../context/AppLockContext';
 import * as api from '../services/api';
 import { saveLocalPinHash } from '../utils/security';
+import { generateRSAKeyPair } from '../services/crypto';
 
 const { width } = Dimensions.get('window');
 
@@ -45,6 +46,8 @@ export default function CreatePassword() {
   const nid = String(rawNid || '').trim();
   const activationCode = String(rawCode || '').trim();
   const username = String(rawUser || '').toLowerCase().trim();
+  const rawFullName = Array.isArray(params.fullName) ? params.fullName[0] : params.fullName;
+  const fullName = String(rawFullName || '').trim();
 
   // Form States (PIN values)
   const [password, setPassword] = useState(''); // Stores the PIN
@@ -68,8 +71,8 @@ export default function CreatePassword() {
   const passwordRef = useRef<TextInput>(null);
   const confirmPasswordRef = useRef<TextInput>(null);
 
-  // Live validation checks (Only length matches now)
-  const isMinLength = password.length >= 8;
+  // Live validation checks — exact 5 digits
+  const isExactLength = password.length === 5;
 
   // Live field-level errors calculated dynamically on render
   const passwordError = fieldErrors.password ? t.pinLengthLimitError : null;
@@ -100,10 +103,10 @@ export default function CreatePassword() {
     }
   };
 
-  // Form submission validation
+  // Form submission validation — exact 5 digits
   const isFormValid =
-    isMinLength &&
-    confirmPassword.length >= 8 &&
+    isExactLength &&
+    confirmPassword.length === 5 &&
     password === confirmPassword &&
     !isLoading;
 
@@ -117,24 +120,29 @@ export default function CreatePassword() {
     setFieldErrors({});
 
     try {
-      if (!username || !nid || !activationCode || password.length < 8) {
+      if (!username || !nid || !activationCode || password.length !== 5) {
         setIsLoading(false);
         setShowErrorBanner(true);
         setErrorMessage('Missing username, password, NID/BRC, or activation code');
         return;
       }
 
+      // Register first (RSA key generation happens in background after)
       const result = await api.register(
         username,
         password,
         nid,
-        activationCode
+        activationCode,
+        {
+          fullName: fullName || undefined,
+          biometricEnrolled: true,
+        }
       );
 
       if (result.success) {
         await saveLocalPinHash(username, password);
 
-        // Auto-authenticate session, update AuthContext & SecureStore, and seed SQLite cache
+        // Auto-authenticate session
         const loginRes = await login(username, password);
         if (loginRes.success) {
           unlock();
@@ -142,19 +150,33 @@ export default function CreatePassword() {
 
         setIsLoading(false);
 
-        // SUCCESS STATE: Navigate to success page
+        // Navigate to success page immediately
         router.push({
           pathname: '/activation-success',
           params: {
             nid,
             activationCode,
             username,
-            password, // Passing the PIN value
+            password,
           },
         });
+
+        // Generate RSA keys in background (non-blocking)
+        setTimeout(() => {
+          generateRSAKeyPair().then((keyResult) => {
+            if (keyResult.success && keyResult.publicKeyPem) {
+              console.log('[CREATE-PASSWORD] RSA key generated, uploading to server...');
+              api.register(username, password, nid, activationCode, {
+                rsaPublicKey: keyResult.publicKeyPem,
+              }).catch(() => {});
+            }
+          }).catch((e: any) => {
+            console.warn('[CREATE-PASSWORD] Background RSA generation skipped:', e);
+          });
+        }, 2000);
+
       } else {
         setIsLoading(false);
-        // ERROR STATE: Show failure banner with real API message
         setShowErrorBanner(true);
         setErrorMessage(result.message || 'Registration failed.');
       }
@@ -323,11 +345,11 @@ export default function CreatePassword() {
             <View style={[styles.checklistCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
               <View style={styles.checkItem}>
                 <Ionicons
-                  name={isMinLength ? 'checkmark-circle' : 'ellipse-outline'}
+                  name={isExactLength ? 'checkmark-circle' : 'ellipse-outline'}
                   size={20}
-                  color={isMinLength ? theme.primary : (isDarkMode ? '#555' : '#D1CCEC')}
+                  color={isExactLength ? theme.primary : (isDarkMode ? '#555' : '#D1CCEC')}
                 />
-                <Text style={[styles.checkText, { color: theme.textSecondary }, isMinLength && [styles.checkTextActive, { color: theme.primary }]]}>
+                <Text style={[styles.checkText, { color: theme.textSecondary }, isExactLength && [styles.checkTextActive, { color: theme.primary }]]}>
                   {t.pinMinLengthPlaceholder}
                 </Text>
               </View>

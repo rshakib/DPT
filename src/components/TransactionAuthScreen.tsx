@@ -7,7 +7,6 @@ import {
   Animated,
   Dimensions,
   ActivityIndicator,
-  InteractionManager,
   findNodeHandle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -49,7 +48,7 @@ export function TransactionAuthScreen({
   amount,
   onAuthorized,
   onCancel,
-  pinLength = 8,
+  pinLength = 5,
   onVerifyPin,
 }: TransactionAuthScreenProps) {
   const { theme, isDarkMode } = useAppTheme();
@@ -285,9 +284,9 @@ export function TransactionAuthScreen({
               console.log('🔄 [CHECK 3/4] Halting native driver animations (pulseAnim/rotationAnim)...');
               stopAnimations();
               console.log('✅ [CHECK 3/4 PASSED] Native animation nodes safely detached.');
-              console.log('⏳ [CHECK 4/4] Activating InteractionManager 300ms layout barrier for Fabric...');
+              console.log('⏳ [CHECK 4/4] Activating 300ms layout barrier for Fabric...');
 
-              InteractionManager.runAfterInteractions(() => {
+              setTimeout(() => {
                 setTimeout(() => {
                   if (!isMounted.current) return;
                   setIsPinVerifying(false);
@@ -321,7 +320,7 @@ export function TransactionAuthScreen({
           }
         } else {
           stopAnimations();
-          InteractionManager.runAfterInteractions(() => {
+          setTimeout(() => {
             setTimeout(() => {
               if (isMounted.current) {
                 safeAuthorized();

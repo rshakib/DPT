@@ -56,7 +56,7 @@ export default function SendMoneyConfirm() {
       amount={amount}
       onAuthorized={handleAuthorized}
       onCancel={handleCancel}
-      pinLength={8}
+      pinLength={5}
       onVerifyPin={handleVerifyPin}
     />
   );

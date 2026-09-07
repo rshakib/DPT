@@ -21,7 +21,9 @@ import { Header } from '../components/Header';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
+import { useAuth } from '../context/AuthContext';
 import { useRouter } from 'expo-router';
+import { saveDisplayName, getDisplayName } from '../services/db';
 
 const { width } = Dimensions.get('window');
 
@@ -30,12 +32,26 @@ export default function AppSettings() {
   const { theme, activeThemeName, setThemeName, isDarkMode, toggleDarkMode } = useAppTheme();
   const { language, toggleLanguage } = useLanguage();
   const t = translations[language];
+  const { user, updateUser } = useAuth();
 
   // Local settings states (initialized with current context values)
   const [localDarkMode, setLocalDarkMode] = useState(isDarkMode);
-  const [displayName, setDisplayName] = useState('Shakib Ahmed');
+  const [displayName, setDisplayName] = useState(user?.full_name || user?.username || '');
   const [localLanguage, setLocalLanguage] = useState(language === 'en' ? 'English' : 'Bangla');
   const [currency, setCurrency] = useState('BDT');
+
+  // Load display name from SQLite on mount
+  useEffect(() => {
+    const loadDisplayName = async () => {
+      if (user?.username) {
+        const savedName = await getDisplayName(user.username);
+        if (savedName) {
+          setDisplayName(savedName);
+        }
+      }
+    };
+    loadDisplayName();
+  }, [user?.username]);
 
   // Keep local dark mode state synchronized with context isDarkMode changes
   useEffect(() => {
@@ -49,6 +65,7 @@ export default function AppSettings() {
 
   // Focus state for active input box style
   const [isNameFocused, setIsNameFocused] = useState(false);
+  const nameInputRef = useRef<TextInput>(null);
 
   // Picker modal states
   const [activePicker, setActivePicker] = useState<'language' | 'currency' | null>(null);
@@ -78,7 +95,7 @@ export default function AppSettings() {
     });
   };
 
-  const handleSavePreferences = () => {
+  const handleSavePreferences = async () => {
     // 1. Commit theme changes app-wide if toggle state changed
     if (localDarkMode !== isDarkMode) {
       toggleDarkMode();
@@ -90,14 +107,15 @@ export default function AppSettings() {
       toggleLanguage(targetLangCode);
     }
 
-    // MOCK — wire actual storage saving API (e.g. AsyncStorage) later
+    // Display name is read-only (from full_name), no save needed
+
     triggerToast(t.prefSaved || 'Preferences saved successfully!');
   };
 
   const handleDiscardChanges = () => {
     // Reset local states back to current context/default values
     setLocalDarkMode(isDarkMode);
-    setDisplayName('Shakib Ahmed');
+    setDisplayName(user?.full_name || user?.username || '');
     setLocalLanguage(language === 'en' ? 'English' : 'Bangla');
     setCurrency('BDT');
 
@@ -195,28 +213,21 @@ export default function AppSettings() {
             </Text>
             
             <View style={[styles.formCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
-              {/* Display Name Input */}
+              {/* Full Name (Read-only from registration) */}
               <View style={styles.fieldGroup}>
                 <Text style={[styles.fieldLabel, { color: theme.text }]}>
-                  {t.walletDisplayName || 'Wallet Display Name'}
+                  {language === 'en' ? 'Full Name' : 'পূর্ণ নাম'}
                 </Text>
-                <View style={[
-                  styles.inputWrapper,
-                  { backgroundColor: isDarkMode ? '#121212' : '#FBFBFF', borderColor: theme.border },
-                  isNameFocused && styles.inputWrapperFocused
-                ]}>
-                  <Ionicons name="person-outline" size={20} color={theme.primary} style={styles.inputIcon} />
-                  <TextInput
-                    style={[styles.textInput, { color: theme.text }]}
-                    placeholder={t.enterDisplayName || 'Enter display name'}
-                    placeholderTextColor="#A5A3C1"
-                    value={displayName}
-                    onChangeText={setDisplayName}
-                    onFocus={() => setIsNameFocused(true)}
-                    onBlur={() => setIsNameFocused(false)}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
+                <View
+                  style={[
+                    styles.inputWrapper,
+                    { backgroundColor: isDarkMode ? '#1A1B20' : '#F4F3F8', borderColor: theme.border },
+                  ]}
+                >
+                  <Ionicons name="person-outline" size={20} color={theme.textSecondary} style={styles.inputIcon} />
+                  <Text style={[styles.textInput, { color: theme.textSecondary, paddingVertical: 16 }]}>
+                    {displayName || user?.username || 'N/A'}
+                  </Text>
                 </View>
               </View>
 

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { useAuth } from './AuthContext';
+import { syncService } from '../services/sync';
 
 interface AppLockContextType {
   isLocked: boolean;
@@ -29,6 +30,8 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
             setIsLocked(true);
           }
         }
+        // Force sync when returning to foreground (handles internet reconnect)
+        syncService.forceSync();
       } else if (nextAppState.match(/inactive|background/)) {
         // App has gone to the background
         lastBackgroundTime.current = Date.now();

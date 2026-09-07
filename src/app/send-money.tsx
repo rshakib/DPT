@@ -106,7 +106,7 @@ export default function SendMoney() {
         setVerifiedReceiver(`@${cleaned}`);
         setValidationError(null);
         setIsOfflineMode(false);
-      } else if (result.message && result.message.toLowerCase().includes('network')) {
+      } else if (result.message && (result.message.toLowerCase().includes('network') || result.message.toLowerCase().includes('fetch') || result.message.toLowerCase().includes('connection failed'))) {
         // Optimistic Offline Mode: Allow valid alphanumeric usernames when offline
         if (cleaned.length >= 3) {
           setVerifiedReceiver(`@${cleaned}`);

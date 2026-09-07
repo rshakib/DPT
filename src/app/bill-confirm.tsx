@@ -63,7 +63,7 @@ export default function BillConfirm() {
       onAuthorized={handleAuthorized}
       onCancel={handleCancel}
       onVerifyPin={handleVerifyPin}
-      pinLength={8}
+      pinLength={5}
     />
   );
 }

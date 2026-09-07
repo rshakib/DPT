@@ -51,7 +51,7 @@ export default function EnterName() {
     if (!isFormValid) return;
 
     router.push({
-      pathname: '/create-password',
+      pathname: '/biometric-enrollment',
       params: {
         nid,
         activationCode,

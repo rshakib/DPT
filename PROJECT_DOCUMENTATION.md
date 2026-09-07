@@ -10,29 +10,53 @@
 ---
 
 ## Table of Contents
-1. [Project Identity & Executive Summary](#1-project-identity--executive-summary)
-2. [Complete System Environment & Version Rules](#2-complete-system-environment--version-rules)
-3. [Exhaustive 100% File & Folder Directory Tree](#3-exhaustive-100-file--folder-directory-tree)
-4. [Critical Safety Rules (How NOT to crash the project)](#4-critical-safety-rules-how-not-to-crash-the-project)
-5. [Canonical User Data Model (Standardized Schema)](#5-canonical-user-data-model-standardized-schema)
-6. [Offline-First SQLite Caching & Database Schema](#6-offline-first-sqlite-caching--database-schema)
-7. [SyncService & Background Delta Sync Logic](#7-syncservice--background-delta-sync-logic)
-8. [Authentication, Session Restore & Lock Engine](#8-authentication-session-restore--lock-engine)
-9. [2-Step Security Protocol (PIN -> Biometrics)](#9-2-step-security-protocol-pin---biometrics)
-10. [Multi-Theme Engine (Classic vs Sol Theme & Dark Mode)](#10-multi-theme-engine-classic-vs-sol-theme--dark-mode)
-11. [Exhaustive Screen Inventory & Button Action Map (29 Screens)](#11-exhaustive-screen-inventory--button-action-map-29-screens)
-12. [Reusable UI Component Inventory & Code Implementation](#12-reusable-ui-component-inventory--code-implementation)
-13. [Backend REST API Endpoint Contracts & JSON Payload Examples](#13-backend-rest-api-endpoint-contracts--json-payload-examples)
-14. [Source Code Implementations of Core Infrastructure Services](#14-source-code-implementations-of-core-infrastructure-services)
+- [🚨 PRIORITY #1: READ THIS FILE FIRST BEFORE ANY OTHER FILE 🚨](#-priority-1-read-this-file-first-before-any-other-file-)
+- [DPT Mobile App — Complete Master Architectural \& Technical Blueprint](#dpt-mobile-app--complete-master-architectural--technical-blueprint)
+  - [Table of Contents](#table-of-contents)
+  - [1. Project Identity \& Executive Summary](#1-project-identity--executive-summary)
+  - [2. Complete System Environment \& Version Rules](#2-complete-system-environment--version-rules)
+  - [3. Exhaustive 100% File \& Folder Directory Tree](#3-exhaustive-100-file--folder-directory-tree)
+  - [4. Critical Safety Rules (How NOT to crash the project)](#4-critical-safety-rules-how-not-to-crash-the-project)
+  - [5. Canonical User Data Model (Standardized Schema)](#5-canonical-user-data-model-standardized-schema)
+  - [6. Offline-First SQLite Caching \& Database Schema](#6-offline-first-sqlite-caching--database-schema)
+    - [Table 1: `cached_user`](#table-1-cached_user)
+    - [Table 2: `cached_transactions`](#table-2-cached_transactions)
+    - [Table 3: `cached_notifications`](#table-3-cached_notifications)
+  - [7. SyncService \& Background Delta Sync Logic](#7-syncservice--background-delta-sync-logic)
+  - [8. Authentication, Session Restore \& Lock Engine](#8-authentication-session-restore--lock-engine)
+  - [9. 2-Step Security Protocol (PIN -\> Biometrics)](#9-2-step-security-protocol-pin---biometrics)
+  - [10. Multi-Theme Engine (Classic vs Sol Theme \& Dark Mode)](#10-multi-theme-engine-classic-vs-sol-theme--dark-mode)
+  - [11. Exhaustive Screen Inventory \& Button Action Map (31 Screens)](#11-exhaustive-screen-inventory--button-action-map-31-screens)
+  - [12. Reusable UI Component Inventory \& Code Implementation](#12-reusable-ui-component-inventory--code-implementation)
+  - [13. Backend REST API Endpoint Contracts \& JSON Payload Examples](#13-backend-rest-api-endpoint-contracts--json-payload-examples)
+  - [14. Source Code Implementations of Core Infrastructure Services](#14-source-code-implementations-of-core-infrastructure-services)
     - [14.1 AuthContext (`src/context/AuthContext.tsx`)](#141-authcontext-srccontextauthcontexttsx)
     - [14.2 ThemeContext (`src/context/ThemeContext.tsx`)](#142-themecontext-srccontextthemecontexttsx)
     - [14.3 Database Service (`src/services/db.ts`)](#143-database-service-srcservicesdbts)
     - [14.4 Sync Service (`src/services/sync.ts`)](#144-sync-service-srcservicessyncts)
     - [14.5 API Service (`src/services/api.ts`)](#145-api-service-srcservicesapits)
     - [14.6 Transaction Mapper (`src/utils/transactionMapper.ts`)](#146-transaction-mapper-srcutilstransactionmapperts)
-    - [14.7 Theme Definitions (`src/constants/theme.ts`)](#147-theme-definitions-srcconstantsthemetss)
-15. [Developer Commands & Production Build Workflow](#15-developer-commands--production-build-workflow)
-16. [Mandatory Update Rules for Future Sessions](#16-mandatory-update-rules-for-future-sessions)
+    - [14.7 Theme Definitions (`src/constants/theme.ts`)](#147-theme-definitions-srcconstantsthemets)
+  - [15. Developer Commands \& Production Build Workflow](#15-developer-commands--production-build-workflow)
+    - [1. Static Type Safety Check](#1-static-type-safety-check)
+    - [2. Local Metro Server Start](#2-local-metro-server-start)
+    - [3. Metro Production Bundle Export](#3-metro-production-bundle-export)
+    - [4. Build Standalone Local APK Preview](#4-build-standalone-local-apk-preview)
+  - [16. Mandatory Update Rules for Future Sessions](#16-mandatory-update-rules-for-future-sessions)
+  - [17. Comprehensive Forensic Bug Fixes \& Architectural Hardening (DPT Changelog)](#17-comprehensive-forensic-bug-fixes--architectural-hardening-dpt-changelog)
+    - [17.1 The Android Native View Collision Crash (`addViewAt...child already has a parent`)](#171-the-android-native-view-collision-crash-addviewatchild-already-has-a-parent)
+      - [A. Root Cause Analysis](#a-root-cause-analysis)
+      - [B. Architectural Resolution](#b-architectural-resolution)
+    - [17.2 Merchant Payment, Mobile Recharge \& Utility Service Payment Handling](#172-merchant-payment-mobile-recharge--utility-service-payment-handling)
+      - [A. Root Cause of 404 Rejections on Services](#a-root-cause-of-404-rejections-on-services)
+      - [B. Frontend Service Transaction Handling](#b-frontend-service-transaction-handling)
+    - [17.3 Concurrency \& Duplicate Navigation Guards](#173-concurrency--duplicate-navigation-guards)
+    - [17.4 Brand Asset Migration \& UI Refinements](#174-brand-asset-migration--ui-refinements)
+    - [17.5 Offline-First Transaction System (Complete Implementation)](#175-offline-first-transaction-system-complete-implementation)
+    - [17.6 UI Redesigns](#176-ui-redesigns)
+    - [17.7 New Features](#177-new-features)
+    - [17.8 Bug Fixes](#178-bug-fixes)
+    - [17.9 Dependencies Added](#179-dependencies-added)
 
 ---
 
@@ -59,63 +83,95 @@
 ## 3. Exhaustive 100% File & Folder Directory Tree
 
 ```text
-/run/media/shaki/2472D89F72D87750/NEW/
+/run/media/shaki/2472D89F72D87750/FYDP/
+├── index.ts                                 # App entry point: enableScreens(false) + expo-router/entry import
+├── App.tsx                                  # Legacy root component (unused — expo-router handles entry via index.ts)
 ├── app.json                                 # Expo SDK 57 configuration & permissions (Camera, Biometrics)
-├── package.json                             # Dependencies & entry point ("expo-router/entry")
-├── tsconfig.json                            # TypeScript path alias configuration
+├── package.json                             # Dependencies & scripts
+├── tsconfig.json                            # TypeScript strict mode, path aliases (@/* -> ./src/*)
+├── metro.config.js                          # Metro bundler config (adds .wasm asset extension)
+├── eas.json                                 # EAS Build profiles (development, preview, production)
+├── expo-env.d.ts                            # Expo TypeScript environment declaration
+├── .gitignore                               # Ignores node_modules, .expo, dist, ios/, android/
 ├── AGENTS.md                                # Highest priority instruction pointing to PROJECT_DOCUMENTATION.md
 ├── PROJECT_DOCUMENTATION.md                 # THIS MASTER BLUEPRINT
+├── LICENSE                                  # Project license file
+├── OFFLINE_PLAN.md                          # Offline-first architecture planning document
+├── REGISTRATION_PIN_FIX_REPORT.md           # PIN registration bug fix report
+├── DPT_BIOMETRIC_ENROLLMENT_AUDIT.md       # Biometric enrollment audit
+├── DPT_CONFERENCE_SECURITY_ATTACK_ASSESSMENT.md
+├── DPT_CONFERENCE_SECURITY_EVIDENCE.md
+├── DPT_NEW_ACCOUNT_FLOW_AUDIT.md
+├── DPT_NEW_ACCOUNT_PAGE_FLOW_AUDIT.md
+├── DPT_REGISTER_400_ROOT_CAUSE_AUDIT.md
+├── DPT_REGISTRATION_DEEP_RUNTIME_AUDIT.md
+├── DPT_REPLAY_ATTACK_FIX_REPORT.md
+├── DPT_SECURITY_ASSESSMENT_REPORT.md
+├── crash_log.txt                            # Android crash log for debugging
+├── assets/                                  # Static assets (images, fonts, splash, icons)
+│   └── images/                              # App illustrations and brand icons
+├── android/                                 # Generated native Android project (gitignored)
+├── ios/                                     # Generated native iOS project (gitignored)
 └── src/
-    ├── app/                                 # EXPO ROUTER PAGES (29 Screens)
-    │   ├── _layout.tsx                      # Root stack, Theme/Lang/Auth providers, Session Lock router
+    ├── global.css                           # Global CSS (web platform only)
+    ├── app/                                 # EXPO ROUTER PAGES (31 Screens)
+    │   ├── _layout.tsx                      # Root stack, Theme/Lang/Auth/AppLock providers, Session Lock router, Sentry stub
     │   ├── index.tsx                        # Welcome / Onboarding activation landing page
-    │   ├── login.tsx                        # Account login form (username & password)
-    │   ├── quick-unlock.tsx                 # App Unlock lockscreen (2-Step PIN -> Biometric sequence)
-    │   ├── dashboard.tsx                    # Main Home Dashboard (Balance Card, Action Grid, Activity)
+    │   ├── login.tsx                        # Account login form (username & 8-digit PIN)
+    │   ├── quick-unlock.tsx                 # App Unlock lockscreen (2-Step PIN -> Biometric sequence, 3-strike lockout)
+    │   ├── dashboard.tsx                    # Main Home Dashboard (Balance Card, 8-Grid Features, Recent Activity, 5-Tab Bar)
     │   ├── history.tsx                      # Transaction History (All/Success/Failed tabs + Day-wise date filtering + CSV export)
-    │   ├── notifications.tsx                # Notifications Feed (Read/Unread badge persistence)
-    │   ├── profile.tsx                      # User Profile (Limits, Daily spending, Account details)
-    │   ├── settings.tsx                     # Settings (Dark Mode toggle, Classic vs Sol Theme picker)
-    │   ├── security.tsx                     # Security Settings (PIN change & Biometrics toggle)
-    │   ├── send-money.tsx                   # P2P Send Money input form
-    │   ├── send-money-confirm.tsx            # Send Money confirmation screen
-    │   ├── cashout.tsx                      # Agent Cash Out input form
-    │   ├── merchant.tsx                     # Merchant Payment input form
-    │   ├── merchant-confirm.tsx             # Merchant Payment confirmation screen
-    │   ├── recharge.tsx                     # Mobile Recharge operator input form
-    │   ├── recharge-confirm.tsx             # Mobile Recharge confirmation screen
-    │   ├── bills.tsx                        # Utility Bill Payment provider selection
-    │   ├── bill-confirm.tsx                 # Utility Bill Payment confirmation screen
-    │   ├── qr-pay.tsx                       # Camera QR scanner page
-    │   ├── qr-amount.tsx                    # QR payment amount input screen
-    │   ├── qr-pay-confirm.tsx               # QR payment confirmation screen
-    │   ├── my-qr.tsx                        # User personal QR code generator
-    │   ├── features.tsx                     # Additional Features overview page
-    │   ├── officer-verify.tsx               # Officer activation code verification form
-    │   ├── biometric-enrollment.tsx        # Initial biometric registration setup
-    │   ├── create-password.tsx              # Account password creation form
-    │   ├── activation-success.tsx           # Activation success confirmation page
-    │   ├── transaction-processing.tsx       # Async API execution overlay screen
-    │   └── transaction-result.tsx           # Detailed Printable Transaction Receipt
+    │   ├── notifications.tsx                # Notifications Feed (Read/Unread badge persistence, login dedup)
+    │   ├── profile.tsx                      # User Profile (Menu cards, Security/Settings links, Logout)
+    │   ├── settings.tsx                     # Settings (Dark Mode toggle, Classic vs Sol Theme picker, Language/Currency pickers)
+    │   ├── security.tsx                     # Security Center (Security score gauge, PIN change, Biometric toggles)
+    │   ├── send-money.tsx                   # P2P Send Money input form (live receiver validation, offline mode)
+    │   ├── send-money-confirm.tsx           # Send Money 2-Step Auth -> TransactionProcessingView
+    │   ├── cashout.tsx                      # Agent Cash Out unavailable placeholder screen
+    │   ├── merchant.tsx                     # Merchant Payment input form (popular merchants, custom handles)
+    │   ├── merchant-confirm.tsx             # Merchant Payment 2-Step Auth -> TransactionProcessingView
+    │   ├── recharge.tsx                     # Mobile Recharge operator selector + amount presets
+    │   ├── recharge-confirm.tsx             # Mobile Recharge 2-Step Auth -> TransactionProcessingView
+    │   ├── bills.tsx                        # Utility Bill Payment (pending/history tabs, mock billers)
+    │   ├── bill-confirm.tsx                 # Utility Bill 2-Step Auth -> TransactionProcessingView
+    │   ├── qr-pay.tsx                       # Camera QR scanner + manual username entry fallback
+    │   ├── qr-amount.tsx                    # QR payment amount input (quick presets, optional note)
+    │   ├── qr-pay-confirm.tsx               # QR payment 2-Step Auth -> transaction-processing route
+    │   ├── my-qr.tsx                        # User personal QR code generator (download, share)
+    │   ├── features.tsx                     # Additional Features accordion (Email, QR, NFC, Card)
+    │   ├── officer-verify.tsx               # Officer activation code verification (NID, Code, Username)
+    │   ├── enter-name.tsx                   # Full name input for new account registration
+    │   ├── biometric-enrollment.tsx         # Initial biometric setup (fingerprint SVG ring, hardware check)
+    │   ├── create-password.tsx              # 8-digit PIN creation form with live strength checklist
+    │   ├── activation-success.tsx           # Account activation success page (confetti, features list)
+    │   ├── transaction-processing.tsx       # Legacy async API execution overlay screen (being replaced by TransactionProcessingView)
+    │   └── transaction-result.tsx           # Detailed Printable Transaction Receipt (copy ref, service-type routing)
     ├── components/                          # REUSABLE COMPONENTS
-    │   ├── Header.tsx                       # Dynamic header bar with back chevron
-    │   ├── Logo.tsx                         # Official DPT Brand LogoMark (assets/dpt new.png)
-    │   └── TransactionAuthScreen.tsx        # 2-Step PIN -> Biometrics transfer authorization modal
+    │   ├── Header.tsx                       # Dynamic header bar with back chevron and optional title
+    │   ├── Logo.tsx                         # Official DPT Brand LogoMark (theme-aware SVG)
+    │   ├── TransactionAuthScreen.tsx        # 2-Step PIN -> Biometrics transfer authorization modal
+    │   ├── TransactionProcessingView.tsx    # Transaction execution view (API call, offline queue, service fallback)
+    │   ├── BottomSkylineSvg.tsx             # City skyline SVG footer illustration (brand color tinted)
+    │   └── ui/                              # UI primitives directory (currently empty)
     ├── context/                             # STATE PROVIDERS
-    │   ├── AuthContext.tsx                  # Tokens, user state, login, logout, switchAccount
-    │   ├── ThemeContext.tsx                 # Dynamic Theme Engine (Classic vs Sol, Dark Mode)
+    │   ├── AuthContext.tsx                  # Tokens, user state, login, logout, switchAccount, updateUser
+    │   ├── ThemeContext.tsx                 # Dynamic Theme Engine (Classic vs Sol, Dark Mode, SecureStore persistence)
     │   ├── LanguageContext.tsx              # Localization Engine (English vs Bangla)
-    │   └── AppLockContext.tsx               # Session Lock Manager (`isLocked` state)
+    │   └── AppLockContext.tsx               # Session Lock Manager (auto-lock on 15s background, isLocked state)
     ├── constants/                           # DESIGN TOKENS & STRINGS
-    │   ├── theme.ts                         # Color tokens & palettes for Classic and Sol themes
-    │   └── translations.ts                  # English & Bangla translation dictionaries
+    │   ├── theme.ts                         # Color tokens & palettes for Classic, Sol, light/dark modes + Spacing
+    │   └── translations.ts                  # English & Bangla translation dictionaries (100+ keys)
+    ├── hooks/                               # CUSTOM HOOKS
+    │   ├── use-color-scheme.ts              # Native color scheme hook
+    │   ├── use-color-scheme.web.ts          # Web color scheme hook
+    │   └── use-theme.ts                     # Theme utility hook
     ├── services/                            # CORE SERVICES
-    │   ├── api.ts                           # REST API client endpoints & fetch wrappers
-    │   ├── db.ts                            # Expo SQLite database setup, queries & UPSERTs
-    │   └── sync.ts                          # SyncService background 15s delta sync manager
+    │   ├── api.ts                           # REST API client (login, register, checkReceiver, transfer w/ idempotency, getUser, getTransactions, getNotifications, verifyPin, safeParseJsonResponse)
+    │   ├── db.ts                            # Expo SQLite (4 tables: cached_user, cached_transactions, cached_notifications, pending_offline_transactions; epoch-based sorting, schema migrations, offline queue)
+    │   └── sync.ts                          # SyncService background 15s delta sync manager (initialSync, deltaSync, subscribe/notify)
     └── utils/                               # UTILITY HELPERS
-        ├── transactionMapper.ts            # Maps raw API transactions to normalized UI structures
-        └── security.ts                     # Hardware-isolated salted SHA-256 local PIN hashing & verification
+        ├── transactionMapper.ts            # Maps raw API transactions to normalized UI structures (icon, color, time formatting, timestampMs)
+        └── security.ts                     # Hardware-isolated salted SHA-256 local PIN hashing, 3-strike 15-min lockout, UUID generator
 ```
 
 ---
@@ -153,6 +209,7 @@ export interface CanonicalUser {
   account_id?: string;
   phone?: string;
   name?: string;
+  display_name?: string;  // Wallet display name (editable in Settings, stored in SQLite)
 }
 ```
 
@@ -166,8 +223,11 @@ Database Name: `niropay.db` (Managed via `src/services/db.ts`)
 ```sql
 CREATE TABLE IF NOT EXISTS cached_user (
   username TEXT PRIMARY KEY,
-  data TEXT, -- JSON stringified CanonicalUser
-  updated_at TEXT
+  balance REAL,
+  daily_limit REAL,
+  today_spent REAL,
+  updated_at TEXT,
+  raw_json TEXT          -- JSON stringified CanonicalUser
 );
 ```
 
@@ -176,8 +236,14 @@ CREATE TABLE IF NOT EXISTS cached_user (
 CREATE TABLE IF NOT EXISTS cached_transactions (
   id TEXT PRIMARY KEY,
   username TEXT,
-  data TEXT, -- JSON stringified Transaction
-  created_at TEXT
+  amount REAL,
+  status TEXT,
+  type TEXT,
+  counterparty TEXT,
+  created_at TEXT,
+  created_at_epoch INTEGER,  -- Numeric epoch for fast sorting
+  reference TEXT,
+  raw_json TEXT              -- JSON stringified Transaction
 );
 ```
 
@@ -186,10 +252,41 @@ CREATE TABLE IF NOT EXISTS cached_transactions (
 CREATE TABLE IF NOT EXISTS cached_notifications (
   id TEXT PRIMARY KEY,
   username TEXT,
-  data TEXT, -- JSON stringified Notification
-  created_at TEXT
+  title TEXT,
+  message TEXT,
+  notification_type TEXT,
+  is_read INTEGER,
+  created_at TEXT,
+  created_at_epoch INTEGER,  -- Numeric epoch for fast sorting
+  raw_json TEXT              -- JSON stringified Notification
 );
 ```
+
+### Table 4: `pending_offline_transactions`
+```sql
+CREATE TABLE IF NOT EXISTS pending_offline_transactions (
+  id TEXT PRIMARY KEY,
+  username TEXT,
+  receiver TEXT,
+  amount REAL,
+  type TEXT,
+  created_at TEXT,
+  created_at_epoch INTEGER,
+  status TEXT,               -- 'pending'
+  raw_json TEXT              -- JSON stringified offline transaction payload
+);
+```
+
+### Table 5: `user_settings`
+```sql
+CREATE TABLE IF NOT EXISTS user_settings (
+  username TEXT PRIMARY KEY,
+  profile_image TEXT,          -- Base64 encoded profile picture
+  display_name TEXT            -- Wallet display name (editable, persists until uninstall)
+);
+```
+
+> **PRAGMA settings**: `journal_mode = WAL`, `busy_timeout = 5000`. Schema migrations are applied at startup for existing databases (adding `created_at_epoch`, `username`, `display_name` columns).
 
 ---
 
@@ -197,9 +294,13 @@ CREATE TABLE IF NOT EXISTS cached_notifications (
 
 Located in `src/services/sync.ts`:
 - **`initialSync(username)`**: Downloads full dataset upon login and performs initial SQLite UPSERT.
-- **`deltaSync(username)`**: Queries SQLite for the latest `created_at` timestamp and passes `?since=<iso_timestamp>` to API endpoints. Only new or updated records are merged into SQLite using `INSERT OR REPLACE INTO`.
-- **`startBackgroundSync(username)`**: Runs an automatic 15-second timer (`setInterval`).
+- **`deltaSync(username)`**: Queries SQLite for the latest `created_at` timestamp and passes `?since=<iso_timestamp>` to API endpoints. Only new or updated records are merged into SQLite using `INSERT OR REPLACE INTO`. Also flushes pending offline transactions to server.
+- **`startBackgroundSync(username)`**: Runs an automatic 15-second timer (`setInterval`) + 14-minute health check timer.
 - **`subscribe(listener)`**: Emits events to update UI components reactively whenever SQLite changes.
+- **`forceSync(username)`**: Forces an immediate sync, bypassing the `isSyncing` guard. Called when app returns to foreground.
+- **`notifyDataChanged()`**: Public method to notify all listeners that SQLite data has changed. Called after writing offline transactions.
+- **`setReconciliationAlertCallback(callback)`**: Registers a callback to show popup alerts when offline transactions are reconciled. Stores pending alerts if callback is null.
+- **`pauseSync()` / `resumeSync()`**: Pause/resume sync during critical flows.
 
 ---
 
@@ -242,6 +343,8 @@ Every sensitive action (App Unlock, Send Money, Cash Out, Merchant Payment, Rech
 
 ## 10. Multi-Theme Engine (Classic vs Sol Theme & Dark Mode)
 
+**Default Theme: Sol** (Orange `#FF6B00`) — Changed from Classic in session update.
+
 Centralized in `ThemeContext.tsx` & `src/constants/theme.ts`:
 
 | Token | Classic Theme (Purple) | Sol Theme (Enterprise Orange & Charcoal) |
@@ -257,39 +360,43 @@ Centralized in `ThemeContext.tsx` & `src/constants/theme.ts`:
 
 ---
 
-## 11. Exhaustive Screen Inventory & Button Action Map (29 Screens)
+## 11. Exhaustive Screen Inventory & Button Action Map (31 Screens)
 
 1. **`index.tsx`**: `[Have Activation Code]` $\rightarrow$ `/officer-verify`, `[Already Registered? Login]` $\rightarrow$ `/login`.
 2. **`login.tsx`**: `[Eye Icon]` toggles password, `[Login]` calls `AuthContext.login()` $\rightarrow$ `/dashboard`, `[Activate new account]` $\rightarrow$ `/officer-verify`.
-3. **`quick-unlock.tsx`**: PIN Keypad (0-9, Backspace), Fingerprint Circle scan, `[Switch Account]` $\rightarrow$ `/login`, `[Logout]` $\rightarrow$ `/login`.
-4. **`dashboard.tsx`**: Eye icon balance toggle, Profile avatar $\rightarrow$ `/profile`, 8 grid feature items, recent activity list, 5 bottom tabs.
-5. **`history.tsx`**: Filter tabs (All, Successful, Failed), CSV export icon, card click $\rightarrow$ `/transaction-result`.
-6. **`notifications.tsx`**: `[Mark All as Read]` button, item click toggles local read status, deduplicates login notifications to show only the freshest login notification.
-7. **`profile.tsx`**: Limits progress bar, `[Security Settings]` $\rightarrow$ `/security`, `[App Settings]` $\rightarrow$ `/settings`, `[Show My QR]` $\rightarrow$ `/my-qr`.
-8. **`settings.tsx`**: Dark mode switch, Theme Preset toggle (`Classic` vs `Sol`), language picker modal, currency picker modal.
-9. **`security.tsx`**: PIN change form & biometrics toggle switch.
-10. **`send-money.tsx` & `send-money-confirm.tsx`**: Recipient check $\rightarrow$ `TransactionAuthScreen` modal (PIN + Biometrics) $\rightarrow$ `/transaction-processing`.
-11. **`cashout.tsx`**: Agent cashout form $\rightarrow$ `TransactionAuthScreen` modal $\rightarrow$ `/transaction-processing`.
-12. **`merchant.tsx` & `merchant-confirm.tsx`**: Merchant payment form $\rightarrow$ `TransactionAuthScreen` modal.
-13. **`recharge.tsx` & `recharge-confirm.tsx`**: Mobile recharge operator selector $\rightarrow$ `TransactionAuthScreen` modal.
-14. **`bills.tsx` & `bill-confirm.tsx`**: Utility bill selector $\rightarrow$ `TransactionAuthScreen` modal.
-15. **`qr-pay.tsx`, `qr-amount.tsx` & `qr-pay-confirm.tsx`**: Camera QR scanner $\rightarrow$ amount input $\rightarrow$ `TransactionAuthScreen` modal.
-16. **`my-qr.tsx`**: Personal account QR display for receiving money.
-17. **`features.tsx`**: Additional services promotional showcase.
-18. **`officer-verify.tsx`**: Activation code verification form.
-19. **`biometric-enrollment.tsx`**: Initial biometric setup guide.
-20. **`create-password.tsx`**: Password setup form.
-21. **`activation-success.tsx`**: Account activation success confirmation.
-22. **`transaction-processing.tsx`**: Async processing loading overlay screen.
-23. **`transaction-result.tsx`**: Detailed printable transaction receipt screen.
+3. **`quick-unlock.tsx`**: PIN Keypad (0-9, Backspace), Fingerprint Circle scan, 3-strike 15-min brute-force lockout, `[Switch Account]` $\rightarrow$ `/login`, `[Logout]` $\rightarrow$ `/login`.
+4. **`dashboard.tsx`**: Eye icon balance toggle, Profile avatar $\rightarrow$ `/profile`, 8 grid feature items, recent activity list, 5 bottom tabs (Home, History, QR FAB, Alerts, Profile).
+5. **`history.tsx`**: Filter tabs (All, Successful, Failed), Day-wise date filter pills (All Time, Today, Yesterday, Last 7 Days, Last 30 Days), CSV export icon, card click $\rightarrow$ `/transaction-result`.
+6. **`notifications.tsx`**: Item click toggles local read status (persisted in SecureStore), deduplicates login notifications to show only the freshest login notification.
+7. **`profile.tsx`**: Avatar with camera badge, menu card groups (Personal Info, Accounts, Payment Methods, Limits, Security Center $\rightarrow$ `/security`, Settings $\rightarrow$ `/settings`, Notifications $\rightarrow$ `/notifications`, Help, About, Logout).
+8. **`settings.tsx`**: Dark mode switch, Theme Preset toggle (`Classic` vs `Sol`), language picker bottom sheet modal, currency picker bottom sheet modal, `[Save Preferences]` / `[Discard Changes]` buttons with toast.
+9. **`security.tsx`**: Animated SVG security score gauge (0-100%), `[Improve Score]` button, PIN change alert, Fingerprint Login toggle, Face ID Login toggle.
+10. **`send-money.tsx` & `send-money-confirm.tsx`**: Live debounced receiver check $\rightarrow$ `TransactionAuthScreen` (PIN + Biometrics) $\rightarrow$ `TransactionProcessingView` component.
+11. **`cashout.tsx`**: Agent cash out unavailable placeholder with lock badge, `[Back to Dashboard]` button.
+12. **`merchant.tsx` & `merchant-confirm.tsx`**: Merchant search with popular merchants row, custom merchant handle support $\rightarrow$ `TransactionAuthScreen` $\rightarrow$ `TransactionProcessingView`.
+13. **`recharge.tsx` & `recharge-confirm.tsx`**: Mobile operator selector chips (GP, Robi, Banglalink, Airtel, Teletalk), preset amounts, custom amount $\rightarrow$ `TransactionAuthScreen` $\rightarrow$ `TransactionProcessingView`.
+14. **`bills.tsx` & `bill-confirm.tsx`**: Pending/History tab switcher, mock billers (DPDC, WASA, Titas, BTCL), `[Pay Now]` $\rightarrow$ `TransactionAuthScreen` $\rightarrow$ `TransactionProcessingView`.
+15. **`qr-pay.tsx`, `qr-amount.tsx` & `qr-pay-confirm.tsx`**: Camera QR scanner (CameraView with brackets/laser) + manual username fallback $\rightarrow$ amount input with quick presets $\rightarrow$ `TransactionAuthScreen` $\rightarrow$ `/transaction-processing`.
+16. **`my-qr.tsx`**: Personal account QR code (react-native-qrcode-svg), copy username, download/share buttons.
+17. **`features.tsx`**: Accordion cards (Email Verification, QR/Barcode Scanner $\rightarrow$ `/qr-pay`, NFC Payment, Card Management).
+18. **`officer-verify.tsx`**: NID (10 or 17 digits), 6-digit activation code, bank-assigned username $\rightarrow$ `/biometric-enrollment`.
+19. **`enter-name.tsx`**: Full legal name input (min 2 chars) $\rightarrow$ `/create-password`.
+20. **`biometric-enrollment.tsx`**: Animated SVG fingerprint scanner ring, hardware/enrolled checks, auto-trigger biometric auth $\rightarrow$ `/create-password`.
+21. **`create-password.tsx`**: 8-digit PIN creation + confirm PIN with live strength checklist, `[Activate & Continue]` calls `api.register()` + `saveLocalPinHash()` + auto-login $\rightarrow$ `/activation-success`.
+22. **`activation-success.tsx`**: Confetti decoration, concentric success badge, features list card, `[Enter Application]` or `[Go to Login]`.
+23. **`transaction-processing.tsx`**: Legacy 3-step animated processing overlay (Validating $\rightarrow$ Checking Limit $\rightarrow$ Submitting), handles service payments and offline queue.
+24. **`transaction-result.tsx`**: Status badge with confetti/sparkles, transaction details card (type-aware: P2P, recharge, merchant, bill), copy reference, `[Back to Home]` / `[View History]` buttons.
 
 ---
 
 ## 12. Reusable UI Component Inventory & Code Implementation
 
-- **`Header.tsx`**: Dynamic header bar with back arrow and title.
-- **`Logo.tsx`**: Theme-aware SVG vector ribbon LogoMark reading `theme.gradient`.
+- **`Header.tsx`**: Dynamic header bar with back arrow and optional title prop.
+- **`Logo.tsx`**: Theme-aware SVG vector LogoMark reading `theme.gradient`.
 - **`TransactionAuthScreen.tsx`**: Modal enforcing 2-step PIN $\rightarrow$ Biometrics sequence before executing money transfers.
+- **`TransactionProcessingView.tsx`**: Self-contained transaction execution component (replaces `transaction-processing.tsx` route). Generates UUID idempotency key, calls `api.transfer()`, handles service payments (mobile_recharge, merchant_payment, bill_payment), offline queue fallback, immediate SQLite save on success, and navigates to `/transaction-result`.
+- **`BottomSkylineSvg.tsx`**: City skyline SVG footer illustration with brand color tinting, curved ground waves, dotted flight path, and paper airplane.
+- **`ReconciliationPopup.tsx`**: Global themed modal popup for offline transaction reconciliation results. Uses `theme.cardBg`, `theme.text`, `theme.success`, `theme.error`. Only renders when `isAuthenticated && !isLocked`. Stores pending alerts when callback is null, replays when popup mounts.
 
 ---
 
@@ -297,12 +404,14 @@ Centralized in `ThemeContext.tsx` & `src/constants/theme.ts`:
 
 Base URL: `https://e-pay-fydp.onrender.com`
 
+- **`GET /health`**: Health check — `{"status":"ok"}` (used by app self-ping and backend keep-alive)
 - **`POST /login`**: Body: `{ username, password }` $\rightarrow$ `{ token, user }`.
+- **`POST /register`**: Body: `{ username, password, nid, activationCode }` $\rightarrow$ `{ success: true, ... }` (Status 201).
 - **`GET /user/:username`**: Headers: `Authorization: Bearer <token>` $\rightarrow$ `{ id, username, balance, ... }`.
 - **`GET /transactions/:username?since=<timestamp>`**: Returns `{ transactions: [...] }`.
 - **`GET /notifications/:username?since=<timestamp>`**: Returns `{ notifications: [...] }`.
-- **`GET /check-receiver/:username`**: Returns `{ success: true }`.
-- **`POST /transfer`**: Body: `{ username, receiver, amount }` $\rightarrow$ `{ status: "success", reference: "..." }`.
+- **`GET /check-receiver/:username`**: Headers: `Authorization: Bearer <token>` $\rightarrow$ `{ success: true }` or 404.
+- **`POST /transfer`**: Headers: `Authorization: Bearer <token>`, `X-Idempotency-Key: <uuid>`. Body: `{ username, receiver, amount, idempotencyKey }` $\rightarrow$ `{ status: "success", reference: "...", new_balance, today_spent }`.
 
 ---
 
@@ -1400,4 +1509,154 @@ eas build -p android --profile preview --local
 3. **Day-Wise Date Filtering in Transaction History**:
    - In [src/app/history.tsx](file:///home/shakib/Product/FYDP/src/app/history.tsx), added date filter pills: `All Time`, `Today`, `Yesterday`, `Last 7 Days`, and `Last 30 Days`.
    - Extracted `timestampMs` in [src/utils/transactionMapper.ts](file:///home/shakib/Product/FYDP/src/utils/transactionMapper.ts) to enable instant client-side date range filtering without reloading from server.
-   - Added English and Bengali translation keys in [src/constants/translations.ts](file:///home/shakib/Product/FYDP/src/constants/translations.ts).
+    - Added English and Bengali translation keys in [src/constants/translations.ts](file:///home/shakib/Product/FYDP/src/constants/translations.ts).
+
+---
+
+### 17.5 Offline-First Transaction System (Complete Implementation)
+
+#### A. Architecture Overview
+All 5 payment flows (Send Money, Merchant Payment, Mobile Recharge, Bill Payment, QR Pay) now work fully offline. Transactions are queued in SQLite when offline and automatically reconciled when internet returns.
+
+#### B. Offline Transaction Flow
+1. **User initiates transaction** → Enters PIN + Biometric (local verification via `verifyPinLocally`)
+2. **`api.transfer()` fails with network error** → Detected via `includes('network') || includes('fetch') || includes('connection failed')`
+3. **Transaction queued** → Saved to `pending_offline_transactions` table + `cached_transactions` table (with `OFF-` reference prefix)
+4. **Balance deducted locally** → Updated in AuthContext + SQLite `cached_user`
+5. **Dashboard updates immediately** → `syncService.notifyDataChanged()` triggers UI refresh
+6. **Transaction appears with "অফলাইন কিউ" badge** → Light red background card in dashboard and history
+
+#### C. Reconciliation Flow (When Internet Returns)
+1. **`AppLockContext` detects foreground** → Calls `syncService.forceSync()`
+2. **`deltaSync` flushes pending transactions** → Calls `api.transfer()` for each queued transaction
+3. **Network error** → Skip transaction, retry next cycle (no false failure)
+4. **Server rejects (receiver not found)** → Refund balance to SQLite, update transaction status to `failed` (reference changes to `FAIL-`), save failure notification, show themed popup "অফলাইন লেনদেন ব্যর্থ ❌"
+5. **Server accepts** → Delete `OFF-` row from `cached_transactions` (server sync will insert real transaction), save success notification, show themed popup "অফলাইন লেনদেন সফল ✅"
+
+#### D. Files Modified
+- `src/services/sync.ts` — Reconciliation logic, pending alerts queue, `forceSync()`, `notifyDataChanged()`, health check
+- `src/services/db.ts` — `pending_offline_transactions` table, `savePendingOfflineTransaction()`, `getPendingOfflineTransactions()`, `removePendingOfflineTransaction()`, `saveProfileImage()`, `getProfileImage()`, `saveDisplayName()`, `getDisplayName()`, schema migrations
+- `src/components/TransactionProcessingView.tsx` — Offline queue on network failure, immediate SQLite save on success
+- `src/app/transaction-processing.tsx` — Same as above (legacy route)
+- `src/app/send-money.tsx` — Network error detection with `includes('fetch')`
+- `src/app/qr-pay.tsx` — Offline QR payment support (camera + manual entry)
+- `src/components/ReconciliationPopup.tsx` — NEW: Themed modal popup for reconciliation results
+- `src/context/AppLockContext.tsx` — Force sync on foreground return
+- `src/utils/transactionMapper.ts` — Added `merchant_payment`, `qr_payment`, `user_transfer` types; `isOfflinePending` flag
+
+#### E. Security
+- All offline transactions still require local PIN verification (`verifyPinLocally` via salted SHA-256) and biometric scan
+- 3-strike 15-minute brute-force lockout enforced offline
+- Daily spending limit honored (`today_spent + amount <= daily_limit`)
+
+---
+
+### 17.6 UI Redesigns
+
+#### A. Transaction Result Page (`transaction-result.tsx`)
+- **Gradient header** using `LinearGradient` with theme colors (Classic purple / Sol orange for success, red for failed)
+- **Large amount display** (34px) in gradient header
+- **Clean details card** with 28px icon circles for each row
+- **Removed**: Confetti dots, concentric circles, DPT logo text
+- **Added**: Security banner "End-to-end encrypted transaction"
+
+#### B. Quick Unlock Page (`quick-unlock.tsx`)
+- **bKash-style layout**: White background, clean number pad
+- **Logo**: Large DPT LogoMark (200px) with slogan
+- **Number pad**: 90% screen width, 32px font, no borders
+- **PIN entry**: Underline display with masked dots, fingerprint icon removed (biometric is automatic after PIN)
+- **No back arrow**: Only language toggle at top-right
+- **Both PIN + Biometric required**: No shortcuts to skip either step
+
+#### C. Login Page (`login.tsx`)
+- **Number pad for PIN**: Same style as quick-unlock (90% width, 32px font)
+- **No back arrow**: Header removed entirely
+- **Username**: Regular text input with keyboard
+- **PIN**: Custom number pad (no keyboard needed)
+- **Flow**: Enter username → Enter PIN via number pad → Login button activates
+
+#### D. Themed Reconciliation Popup (`ReconciliationPopup.tsx`)
+- **Global modal** in `_layout.tsx` — works on any screen
+- **Theme-aware**: Uses `theme.cardBg`, `theme.text`, `theme.success`, `theme.error`
+- **Only shows when unlocked**: `isAuthenticated && !isLocked`
+- **Pending alerts**: Stores alerts when callback is null, replays when popup mounts
+- **Animation**: Spring scale + fade in/out
+- **Button**: "ঠিক আছে" with accent color
+
+---
+
+### 17.7 New Features
+
+#### A. Wallet Display Name
+- **Editable** in Settings → "Wallet Display Name" input field
+- **Stored in SQLite** `user_settings.display_name` column (persists until app uninstall)
+- **Shown on Dashboard**: "Welcome Back" + display_name
+- **Shown on Profile**: display_name
+- **Default**: Falls back to username if not set
+- **Migration**: `ALTER TABLE user_settings ADD COLUMN display_name TEXT` in `db.ts`
+
+#### B. Profile Picture
+- **Image picker**: `expo-image-picker` with 1:1 crop, 30% quality, base64 encoding
+- **Stored in SQLite** `user_settings.profile_image` column (persists until app uninstall)
+- **Shown on Dashboard**: Profile button circle shows photo
+- **Shown on Profile**: Avatar circle shows photo
+- **Default**: Person icon if no photo set
+
+#### C. Backend Keep-Alive (Render + Supabase)
+- **Self-ping in backend** (`backend/app.py`): Background daemon thread pings `GET /health` every 14 minutes + touches Supabase `profiles` table
+- **App health check** (`src/services/api.ts`): `healthCheck()` function with 10s timeout
+- **SyncService health timer** (`src/services/sync.ts`): Pings server every 14 minutes from app
+- **Prevents**: Render 15-min sleep timeout, Supabase 7-day inactivity pause
+
+#### D. Sol Theme as Default
+- `ThemeContext.tsx`: Default changed from `'classic'` to `'sol'`
+- **Sol theme colors**: Primary `#FF6B00` (Orange), gradient `['#FF6B00', '#FF8533']`
+
+---
+
+### 17.8 Bug Fixes
+
+#### A. Network Error Detection
+- **Issue**: React Native's `fetch` throws different error messages: "Network request failed", "fetch failed", "connection failed"
+- **Fix**: Added `includes('fetch')` to all network error detection in 5 files
+- **Files**: `send-money.tsx`, `qr-pay.tsx` (2 locations), `TransactionProcessingView.tsx`, `transaction-processing.tsx`
+
+#### B. Duplicate Transaction Records
+- **Issue**: Offline transaction saved with `id: 'OFF-123456'`, server sync creates new row with different UUID
+- **Fix**: When reconciliation succeeds, DELETE the `OFF-` row from `cached_transactions`. Server sync in same `deltaSync` call inserts the real transaction.
+
+#### C. Transaction Not Showing in History
+- **Issue**: Successful transactions not saved to SQLite immediately
+- **Fix**: Added `db.mergeCachedTransactions()` + `db.saveCachedUser()` + `syncService.notifyDataChanged()` after successful transfer in both `TransactionProcessingView` and `transaction-processing`
+
+#### D. Popup Showing on Lock Screen
+- **Issue**: `ReconciliationPopup` rendered before user authenticates
+- **Fix**: Conditional render `{isAuthenticated && !isLocked && <ReconciliationPopup />}`
+
+#### E. InteractionManager Deprecation
+- **Issue**: `InteractionManager.runAfterInteractions` deprecated in React Native
+- **Fix**: Replaced with `setTimeout` in 4 files: `TransactionProcessingView.tsx`, `transaction-processing.tsx`, `quick-unlock.tsx`, `TransactionAuthScreen.tsx`
+
+#### F. Display Name SQLite Migration
+- **Issue**: `user_settings` table created without `display_name` column on existing databases
+- **Fix**: Added migration `ALTER TABLE user_settings ADD COLUMN display_name TEXT` in `db.ts`
+
+#### G. Sync Stuck When Offline
+- **Issue**: `deltaSync` gets stuck when `fetch` hangs with no timeout, blocking subsequent syncs
+- **Fix**: Added `syncStartTime` timestamp + 30-second safety timeout to force-reset stuck syncs
+
+---
+
+### 17.9 Dependencies Added
+- `expo-image-picker` (~57.0.16) — Profile picture selection
+- `requests` (2.31.0) — Backend self-ping HTTP client
+
+---
+
+## 18. Known Issues & Next Session TODO
+
+### 18.1 Transaction History Issue (Pending Fix)
+- **Status**: Known issue — to be fixed in next session
+- **Problem**: Transaction history has a loading/display issue that needs investigation and resolution
+- **Details**: To be analyzed and documented in the next development session
+- **Priority**: High

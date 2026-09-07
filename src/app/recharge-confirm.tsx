@@ -66,7 +66,7 @@ export default function RechargeConfirm() {
       onAuthorized={handleAuthorized}
       onCancel={handleCancel}
       onVerifyPin={handleVerifyPin}
-      pinLength={8}
+      pinLength={5}
     />
   );
 }

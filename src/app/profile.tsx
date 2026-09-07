@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,16 +8,20 @@ import {
   Alert,
   Dimensions,
   StatusBar,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors, Spacing } from '../constants/theme';
 import { Header } from '../components/Header';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
+import { saveProfileImage, getProfileImage, getDisplayName } from '../services/db';
+import * as api from '../services/api';
 
 const { width } = Dimensions.get('window');
 
@@ -40,12 +44,74 @@ export default function Profile() {
 
   const { logout, user } = useAuth();
 
-  const userName = user?.full_name || 'User';
   const userHandle = user?.username ? `@${user.username}` : '';
 
-  const handleCameraPress = () => {
-    // MOCK — wire real image picker later
-    Alert.alert('Profile Photo', 'Profile photo update placeholder.');
+  const [profileImage, setProfileImage] = useState<string | null>(null);
+  const [displayNameState, setDisplayNameState] = useState(user?.full_name || user?.username || 'User');
+
+  // Load profile image
+  useEffect(() => {
+    const loadData = async () => {
+      if (user?.username) {
+        // Try SQLite first (fast, offline)
+        const img = await getProfileImage(user.username);
+        if (img) {
+          setProfileImage(img);
+        } else {
+          // Try DB1 (server) if not in SQLite
+          try {
+            const res = await api.getProfilePicture(user.username);
+            if (res.success && res.data?.imageData) {
+              setProfileImage(res.data.imageData);
+              // Also save to SQLite for offline access
+              await saveProfileImage(user.username, res.data.imageData);
+            }
+          } catch (e) {
+            // Offline or error — no picture available
+          }
+        }
+        // Use full_name from user object (set during login)
+        if (user.full_name) {
+          setDisplayNameState(user.full_name);
+        }
+      }
+    };
+    loadData();
+  }, [user?.username, user?.full_name]);
+
+  const userName = displayNameState;
+
+  const handleCameraPress = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        language === 'en' ? 'Permission Required' : 'অনুমতি প্রয়োজন',
+        language === 'en' ? 'Please grant photo library access to set a profile picture.' : 'প্রোফাইল ছবি সেট করতে ফটো লাইব্রেরি অ্যাক্সেস দিন।'
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.3,
+      base64: true,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      const base64 = asset.base64;
+      if (base64 && user?.username) {
+        setProfileImage(base64);
+        // Save to SQLite (local)
+        await saveProfileImage(user.username, base64);
+        // Sync to DB1 (server) in background
+        api.saveProfilePicture(user.username, base64).catch((e) =>
+          console.warn('[PROFILE] Failed to sync picture to DB1:', e)
+        );
+      }
+    }
   };
 
   const handleLogout = async () => {
@@ -191,7 +257,14 @@ export default function Profile() {
         <View style={styles.avatarSection}>
           <View style={styles.avatarContainer}>
             <View style={[styles.avatarCircle, { backgroundColor: isDarkMode ? '#1E1E1E' : '#FAF9FF', borderColor: theme.border }]}>
-              <Ionicons name="person" size={64} color="#C6C5DB" />
+              {profileImage ? (
+                <Image
+                  source={{ uri: `data:image/jpeg;base64,${profileImage}` }}
+                  style={styles.avatarImage}
+                />
+              ) : (
+                <Ionicons name="person" size={64} color="#C6C5DB" />
+              )}
             </View>
             <TouchableOpacity
               style={[styles.cameraBadge, { backgroundColor: theme.primary }]}
@@ -263,11 +336,17 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.03,
     shadowRadius: 10,
     elevation: 2,
+  },
+  avatarImage: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
   },
   cameraBadge: {
     position: 'absolute',

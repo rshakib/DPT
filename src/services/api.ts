@@ -1,6 +1,15 @@
 import * as SecureStore from 'expo-secure-store';
 
-const BASE_URL = 'https://e-pay-fydp.onrender.com';
+// ============================================
+// Toggle this for local vs production testing
+// LOCAL:   http://10.0.2.2:5001 (Android emulator) or http://localhost:5001 (iOS/web)
+// PROD:    https://e-pay-fydp.onrender.com
+// ============================================
+const USE_LOCAL = true; // <-- Change to false before deploying to Render
+
+const BASE_URL = USE_LOCAL
+  ? 'http://192.168.0.212:5001'  // PC's local IP (Ethernet + WiFi same router)
+  : 'https://e-pay-fydp.onrender.com';
 
 const TOKEN_KEY = 'niropay_token';
 const USER_KEY = 'niropay_user';
@@ -23,6 +32,44 @@ export interface ApiResult<T> {
   message?: string;
   data?: T;
   status?: number;
+}
+
+/**
+ * Lightweight health check ping to keep Render free-tier server awake.
+ * Uses a minimal GET request with a short timeout.
+ */
+export async function healthCheck(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(`${BASE_URL}/`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return response.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch the server's RSA public key for envelope encryption.
+ */
+export async function getServerPublicKey(): Promise<string | null> {
+  try {
+    const response = await fetch(`${BASE_URL}/server-public-key`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const json = await response.json();
+    if (response.ok && json.public_key) {
+      return json.public_key;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // Helper for crash-proof JSON parsing from raw HTTP response
@@ -86,19 +133,38 @@ export async function login(username: string, password: string): Promise<ApiResu
   }
 }
 
-// 2. register(username, password, nid, activationCode)
+// 2. register(username, password, nid, activationCode, extraFields?)
 export async function register(
   username: string,
   password: string,
   nid: string,
-  activationCode: string
+  activationCode: string,
+  extraFields?: {
+    rsaPublicKey?: string;
+    fullName?: string;
+    mobile?: string;
+    email?: string;
+    biometricEnrolled?: boolean;
+  }
 ): Promise<ApiResult<any>> {
   try {
     const cleanUsername = username.toLowerCase().trim();
+    const payload: Record<string, any> = {
+      username: cleanUsername,
+      password,
+      nid,
+      activationCode,
+    };
+    if (extraFields?.rsaPublicKey) payload.rsaPublicKey = extraFields.rsaPublicKey;
+    if (extraFields?.fullName) payload.fullName = extraFields.fullName;
+    if (extraFields?.mobile) payload.mobile = extraFields.mobile;
+    if (extraFields?.email) payload.email = extraFields.email;
+    if (extraFields?.biometricEnrolled) payload.biometricEnrolled = extraFields.biometricEnrolled;
+
     const response = await fetch(`${BASE_URL}/register`, {
       method: 'POST',
       headers: await getHeaders(false),
-      body: JSON.stringify({ username: cleanUsername, password, nid, activationCode }),
+      body: JSON.stringify(payload),
     });
 
     const parsed = await safeParseJsonResponse(response);
@@ -297,6 +363,53 @@ export async function verifyPin(username: string, pin: string): Promise<ApiResul
       let message = json.error || json.message || 'Verification failed';
       if (response.status === 401) message = 'Invalid PIN';
       return { success: false, message, status: response.status };
+    }
+  } catch (error: any) {
+    return { success: false, message: error.message || 'Network connection failed' };
+  }
+}
+
+// 9. saveProfilePicture(username, imageData) - save to DB1
+export async function saveProfilePicture(username: string, imageData: string): Promise<ApiResult<any>> {
+  try {
+    const response = await fetch(`${BASE_URL}/profile-picture`, {
+      method: 'POST',
+      headers: await getHeaders(true),
+      body: JSON.stringify({ username, imageData }),
+    });
+
+    const parsed = await safeParseJsonResponse(response);
+    if (!parsed.success) {
+      return { success: false, message: parsed.message, status: parsed.status };
+    }
+
+    if (response.ok) {
+      return { success: true, data: parsed.json };
+    } else {
+      return { success: false, message: parsed.json.message || 'Failed to save profile picture' };
+    }
+  } catch (error: any) {
+    return { success: false, message: error.message || 'Network connection failed' };
+  }
+}
+
+// 10. getProfilePicture(username) - get from DB1
+export async function getProfilePicture(username: string): Promise<ApiResult<any>> {
+  try {
+    const response = await fetch(`${BASE_URL}/profile-picture/${username}`, {
+      method: 'GET',
+      headers: await getHeaders(true),
+    });
+
+    const parsed = await safeParseJsonResponse(response);
+    if (!parsed.success) {
+      return { success: false, message: parsed.message, status: parsed.status };
+    }
+
+    if (response.ok) {
+      return { success: true, data: parsed.json };
+    } else {
+      return { success: false, message: parsed.json.message || 'Failed to get profile picture' };
     }
   } catch (error: any) {
     return { success: false, message: error.message || 'Network connection failed' };

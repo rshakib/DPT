@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(npx tsc --noEmit 2 >& 1)",
+      "Shell(npx expo install expo-image-picker 2 >& 1)",
+      "Shell(pip:*)",
+      "Shell(python -c from app import app; print('Backend imports OK') 2 >& 1)",
+      "Shell(curl -s -X POST http://192.168.0.212:5001/login -H Content-Type: application/json -d {\"username\":\"shakil\",\"password\":\"12345\"} 2 >& 1)",
+      "Shell(python3 -m json.tool)",
+      "Shell(ls /opt/android* 2>/dev/null; ls /usr/lib/android* 2>/dev/null; ls /home/shaki/Android 2>/dev/null; ls /snap/android* 2>/dev/null; echo \"ANDROID_HOME=$ANDROID_HOME\"; which adb 2>/dev/null)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

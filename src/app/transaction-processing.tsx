@@ -8,7 +8,6 @@ import {
   Animated,
   Dimensions,
   Easing,
-  InteractionManager,
   findNodeHandle,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -23,6 +22,7 @@ import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import * as db from '../services/db';
+import { syncService } from '../services/sync';
 
 const { width } = Dimensions.get('window');
 
@@ -67,7 +67,7 @@ export default function TransactionProcessing() {
     const nodeTag = containerRef.current ? findNodeHandle(containerRef.current) : null;
     console.log(`[DPT_NATIVE_TRACE][MOUNT] screen=TransactionProcessing nativeTag=${nodeTag} timestamp=${Date.now()}`);
 
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = setTimeout(() => {
       if (!isMounted.current) return;
       console.log('🌟 [DIAGNOSTIC] TransactionProcessing - Screen mounted cleanly in Fabric with 0 collisions!');
 
@@ -107,7 +107,7 @@ export default function TransactionProcessing() {
     return () => {
       isMounted.current = false;
       console.log(`[DPT_NATIVE_TRACE][UNMOUNT] screen=TransactionProcessing nativeTag=${nodeTag} timestamp=${Date.now()}`);
-      task.cancel();
+      clearTimeout(task);
       if (loopAnimPulseRef.current) loopAnimPulseRef.current.stop();
       if (loopAnimRotRef.current) loopAnimRotRef.current.stop();
       pulseAnim.stopAnimation();
@@ -161,6 +161,18 @@ export default function TransactionProcessing() {
           today_spent: newTodaySpent !== undefined ? newTodaySpent : user.today_spent,
         });
 
+        // Update balance in SQLite
+        await db.saveCachedUser(user.username, { ...user, balance: newBalance, today_spent: newTodaySpent });
+
+        // DON'T save transaction to SQLite here — sync service will fetch it from server
+        // This prevents duplicate records (client ID vs server ID mismatch)
+
+        // Notify listeners so dashboard refreshes balance
+        syncService.notifyDataChanged();
+
+        // Trigger an immediate sync to fetch the real transaction from server
+        syncService.forceSync(user.username);
+
         // Transition to Step 3: Submitting
         setAuthStep('submitting');
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -188,17 +200,46 @@ export default function TransactionProcessing() {
         const errorMsg = result.message || '';
 
         // If failure is strictly due to offline network connection, queue offline transaction
-        if (errorMsg.toLowerCase().includes('network') || errorMsg.toLowerCase().includes('connection failed')) {
+        if (errorMsg.toLowerCase().includes('network') || errorMsg.toLowerCase().includes('fetch') || errorMsg.toLowerCase().includes('connection failed')) {
           const offlineRef = `OFF-${Math.floor(100000 + Math.random() * 900000)}`;
           await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), offlineRef);
 
           // Deduct from local user state optimistically
           const currentBal = parseFloat(user.balance || 0);
           const newBal = Math.max(0, currentBal - cleanedAmount);
+          const currentSpent = parseFloat(user.today_spent || 0);
+          const newSpent = currentSpent + cleanedAmount;
+
           await updateUser({
             ...user,
             balance: newBal,
+            today_spent: newSpent,
           });
+
+          // Save updated balance to SQLite so dashboard reads fresh data
+          try {
+            await db.saveCachedUser(user.username, { ...user, balance: newBal, today_spent: newSpent });
+          } catch (e) {}
+
+          // Save transaction to cached_transactions so it appears in dashboard & history immediately
+          const offlineTx = {
+            id: offlineRef,
+            sender_username: user.username,
+            receiver_username: cleanedReceiver,
+            amount: cleanedAmount,
+            type: String(type),
+            status: 'success',
+            reference: offlineRef,
+            created_at: new Date().toISOString(),
+            operator: operator || '',
+            mobileNumber: mobileNumber || '',
+            merchantName: merchantName || '',
+            billerName: billerName || '',
+          };
+          await db.mergeCachedTransactions(user.username, [offlineTx]);
+
+          // Notify dashboard and other listeners to refresh immediately
+          syncService.notifyDataChanged();
 
           safeReplace({
             pathname: '/transaction-result',

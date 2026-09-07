@@ -7,8 +7,7 @@ import {
   Animated,
   ActivityIndicator,
   StatusBar,
-  ScrollView,
-  InteractionManager,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,8 +19,13 @@ import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import { useAppLock } from '../context/AppLockContext';
-import { LogoMark } from '../components/Logo';
 import { verifyPinLocally, getPinLockoutStatus } from '../utils/security';
+import { LogoMark } from '../components/Logo';
+
+const { width } = Dimensions.get('window');
+const NUMPAD_WIDTH = width * 0.90;
+const KEY_SIZE = NUMPAD_WIDTH / 3;
+const KEY_GAP = 0;
 
 type UnlockStep = 'pin' | 'biometric' | 'unlocked';
 
@@ -31,15 +35,15 @@ export default function QuickUnlock() {
   const { language, toggleLanguage } = useLanguage();
   const t = translations[language];
 
-  const { user, lastLoggedInUser, login, logout, switchAccount } = useAuth();
+  const { user, lastLoggedInUser, logout, switchAccount } = useAuth();
   const { unlock } = useAppLock();
 
   const [step, setStep] = useState<UnlockStep>('pin');
   const [pin, setPin] = useState('');
   const [isPinVerifying, setIsPinVerifying] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
+  const [shakeAnim] = useState(new Animated.Value(0));
 
-  // Biometrics States
   const [hasBiometricHardware, setHasBiometricHardware] = useState(true);
   const [isBiometricEnrolled, setIsBiometricEnrolled] = useState(true);
   const [isBiometricAuthenticating, setIsBiometricAuthenticating] = useState(false);
@@ -55,40 +59,27 @@ export default function QuickUnlock() {
     if (username) {
       getPinLockoutStatus(username).then((status) => {
         if (status.isLocked && isMounted.current) {
-          setPinError(status.message || 'PIN authentication is locked for 15 minutes.');
+          setPinError(status.message || 'PIN locked for 15 minutes.');
         }
       });
     }
-    return () => {
-      isMounted.current = false;
-    };
+    return () => { isMounted.current = false; };
   }, []);
 
-  // Biometrics Pulse Animation
   useEffect(() => {
     let animation: Animated.CompositeAnimation | null = null;
     if (step === 'biometric') {
       animation = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.1,
-            duration: 1200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1.0,
-            duration: 1200,
-            useNativeDriver: true,
-          }),
+          Animated.timing(pulseAnim, { toValue: 1.06, duration: 1200, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.0, duration: 1200, useNativeDriver: true }),
         ])
       );
       animation.start();
     } else {
       pulseAnim.setValue(1);
     }
-    return () => {
-      if (animation) animation.stop();
-    };
+    return () => { if (animation) animation.stop(); };
   }, [pulseAnim, step]);
 
   const checkBiometricsSupport = async () => {
@@ -96,23 +87,31 @@ export default function QuickUnlock() {
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       setHasBiometricHardware(hasHardware);
       if (!hasHardware) return;
-
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
       setIsBiometricEnrolled(isEnrolled);
-    } catch (err) {
+    } catch {
       setHasBiometricHardware(false);
     }
   };
 
-  // Step 1: User enters 8-digit PIN
+  const triggerShake = () => {
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 6, duration: 40, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -6, duration: 40, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 4, duration: 40, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -4, duration: 40, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 40, useNativeDriver: true }),
+    ]).start();
+  };
+
   const handleNumPress = async (num: number) => {
     if (step !== 'pin' || isPinVerifying) return;
-    if (pin.length < 8) {
+    if (pin.length < 5) {
       const nextPin = pin + num;
       setPin(nextPin);
       setPinError(null);
 
-      if (nextPin.length === 8) {
+      if (nextPin.length === 5) {
         setIsPinVerifying(true);
         const username = user?.username || lastLoggedInUser || '';
         const result = await verifyPinLocally(username, nextPin);
@@ -121,17 +120,16 @@ export default function QuickUnlock() {
         setIsPinVerifying(false);
 
         if (result.success) {
-          // PIN verified -> proceed to Biometrics step
           if (hasBiometricHardware && isBiometricEnrolled) {
             setStep('biometric');
             triggerBiometricAuth();
           } else {
-            // If biometrics not available on device -> unlock
             unlock();
           }
         } else {
           setPinError(result.message || (language === 'en' ? 'Incorrect PIN' : 'ভুল পিন'));
-          setPin('');
+          triggerShake();
+          setTimeout(() => { if (isMounted.current) setPin(''); }, 300);
         }
       }
     }
@@ -145,20 +143,15 @@ export default function QuickUnlock() {
     }
   };
 
-  // Step 2: Biometric Authentication (Triggered after successful PIN)
   const triggerBiometricAuth = async () => {
-    if (!hasBiometricHardware || !isBiometricEnrolled) {
-      unlock();
-      return;
-    }
-
+    if (!hasBiometricHardware || !isBiometricEnrolled) { unlock(); return; }
     try {
       if (!isMounted.current) return;
       setBiometricError(null);
       setIsBiometricAuthenticating(true);
 
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: t.verifyBiometricIdentityMsg || (language === 'en' ? 'Scan fingerprint to finish unlocking' : 'আনলক নিশ্চিত করতে বায়োমেট্রিক দিন'),
+        promptMessage: t.verifyBiometricIdentityMsg || (language === 'en' ? 'Scan fingerprint to unlock' : 'আনলক করতে ফিঙ্গারপ্রিন্ট দিন'),
         fallbackLabel: t.usePinInsteadMsg || 'Cancel',
         disableDeviceFallback: false,
       });
@@ -168,21 +161,18 @@ export default function QuickUnlock() {
 
       if (result.success) {
         setStep('unlocked');
-        InteractionManager.runAfterInteractions(() => {
-          setTimeout(() => {
-            if (!isMounted.current) return;
-            unlock();
-          }, 300);
-        });
+        setTimeout(() => {
+          if (isMounted.current) unlock();
+        }, 300);
       } else {
         if (result.error !== 'user_cancel' && result.error !== 'system_cancel') {
-          setBiometricError(result.error || (language === 'en' ? 'Biometric scan failed. Tap to try again.' : 'বায়োমেট্রিক মেলেনি, পুনরায় চেষ্টা করুন।'));
+          setBiometricError(result.error || (language === 'en' ? 'Biometric failed' : 'বায়োমেট্রিক ব্যর্থ'));
         }
       }
     } catch (err: any) {
       if (isMounted.current) {
         setIsBiometricAuthenticating(false);
-        setBiometricError(err.message || (language === 'en' ? 'Authentication error' : 'ত্রুটি ঘটেছে'));
+        setBiometricError(err.message || 'Error');
       }
     }
   };
@@ -199,171 +189,176 @@ export default function QuickUnlock() {
     router.replace('/login');
   };
 
-  const displayName = user?.name || user?.username || lastLoggedInUser || (language === 'en' ? 'User' : 'গ্রাহক');
-  const maskedPhone = user?.phone ? user.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2') : '';
-  const dotsArray = Array.from({ length: 8 });
+  const maskedPin = '•'.repeat(pin.length);
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: isDarkMode ? '#0E0D2C' : '#FAF9FF' }]}>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: '#FFFFFF' }]}>
+      <StatusBar barStyle="dark-content" />
 
-      <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false} removeClippedSubviews={false}>
-        {/* Header Bar: Language Switcher */}
-        <View style={styles.topBar}>
-          <View style={styles.languageToggle}>
-            <TouchableOpacity
-              onPress={() => toggleLanguage('en')}
-              style={[styles.langBtn, language === 'en' && styles.langBtnActive]}
-            >
-              <Text style={[styles.langText, language === 'en' && styles.langTextActive]}>EN</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => toggleLanguage('bn')}
-              style={[styles.langBtn, language === 'bn' && styles.langBtnActive]}
-            >
-              <Text style={[styles.langText, language === 'bn' && styles.langTextActive]}>বাংলা</Text>
-            </TouchableOpacity>
-          </View>
+      {/* Top Bar — Language toggle only */}
+      <View style={styles.topBar}>
+        <View style={styles.langToggle}>
+          <TouchableOpacity
+            onPress={() => toggleLanguage('en')}
+            style={[styles.langBtn, language === 'en' && { backgroundColor: theme.primary }]}
+          >
+            <Text style={[styles.langText, language === 'en' && { color: '#FFFFFF' }]}>Eng</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => toggleLanguage('bn')}
+            style={[styles.langBtn, language === 'bn' && { backgroundColor: theme.primary }]}
+          >
+            <Text style={[styles.langText, language === 'bn' && { color: '#FFFFFF' }]}>বাং</Text>
+          </TouchableOpacity>
         </View>
+      </View>
 
-        {/* Logo Section */}
-        <View style={styles.logoSection}>
-          <LogoMark size={160} />
-        </View>
+      {/* Logo — same style as login page */}
+      <View style={styles.logoSection}>
+        <LogoMark size={200} />
+        <Text style={[styles.brandSlogan, { color: '#999' }]}>Digital Pocket Transaction</Text>
+      </View>
 
-        {/* Main Authentication Flow Box */}
-        {step === 'pin' ? (
-          <View style={styles.authStepContainer}>
-            {/* Step Indicator */}
-            <View style={[styles.stepBadge, { backgroundColor: theme.primaryLight }]}>
-              <Text style={[styles.stepBadgeText, { color: theme.primary }]}>
-                {language === 'en' ? 'STEP 1 OF 2: ENTER PIN' : 'ধাপ ১/২: পিন লিখুন'}
-              </Text>
+      {/* Title */}
+      <Text style={[styles.title, { color: '#333' }]}>
+        {step === 'pin'
+          ? (language === 'en' ? 'Enter your DPT PIN' : 'আপনার DPT পিন দিন')
+          : (language === 'en' ? 'Verify your identity' : 'আপনার পরিচয় যাচাই করুন')}
+      </Text>
+
+      {step === 'pin' ? (
+        <>
+          {/* PIN Input Display */}
+          <View style={styles.pinInputContainer}>
+            <View style={[styles.pinInputField, { borderColor: pinError ? '#FF3B30' : '#E5E5E5' }]}>
+              <Animated.View style={{ transform: [{ translateX: shakeAnim }] }}>
+                <Text style={[styles.pinDisplay, { color: pin.length > 0 ? '#333' : '#C0C0C0' }]}>
+                  {pin.length > 0 ? maskedPin : (language === 'en' ? 'Enter PIN' : 'পিন দিন')}
+                </Text>
+              </Animated.View>
             </View>
 
-            {/* PIN Dots */}
-            <View style={styles.dotsRow}>
-              {dotsArray.map((_, index) => {
-                const isActive = index < pin.length;
-                return (
-                  <View
-                    key={index}
-                    style={[
-                      styles.dotCircle,
-                      {
-                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.3)' : theme.primary,
-                        backgroundColor: isActive ? (isDarkMode ? '#FFFFFF' : theme.primary) : 'transparent',
-                      },
-                    ]}
-                  />
-                );
-              })}
-            </View>
+            {/* Error text */}
+            {pinError && (
+              <Text style={[styles.errorText, { color: '#FF3B30' }]}>{pinError}</Text>
+            )}
 
+            {/* Loading */}
             {isPinVerifying && (
               <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 8 }} />
             )}
+          </View>
 
-            {pinError && <Text style={[styles.errorText, { color: theme.error }]}>{pinError}</Text>}
+          {/* Next Button */}
+          <TouchableOpacity
+            style={[
+              styles.nextButton,
+              { backgroundColor: pin.length === 5 ? theme.primary : '#E5E5E5' },
+            ]}
+            disabled={pin.length < 5 || isPinVerifying}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.nextButtonText, { color: pin.length === 5 ? '#FFFFFF' : '#999' }]}>
+              {t.next || 'Next'}
+            </Text>
+            <Ionicons name="arrow-forward" size={20} color={pin.length === 5 ? '#FFFFFF' : '#999'} />
+          </TouchableOpacity>
 
-            {/* Custom Circular Number Pad */}
-            <View style={styles.keyboardGrid}>
-              {[
-                [1, 2, 3],
-                [4, 5, 6],
-                [7, 8, 9],
-              ].map((row, rIdx) => (
-                <View key={rIdx} style={styles.keyboardRow}>
-                  {row.map((num) => (
-                    <TouchableOpacity
-                      key={num}
-                      style={[styles.circularKey, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
-                      disabled={isPinVerifying}
-                      onPress={() => handleNumPress(num)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.circularKeyText, { color: theme.text }]}>
-                        {num}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              ))}
-
-              <View style={styles.keyboardRow}>
-                <View style={styles.circularKeyBlank} />
-                <TouchableOpacity
-                  style={[styles.circularKey, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
-                  disabled={isPinVerifying}
-                  onPress={() => handleNumPress(0)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.circularKeyText, { color: theme.text }]}>0</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.circularKey, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
-                  disabled={isPinVerifying}
-                  onPress={handleBackspace}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="backspace-outline" size={26} color={theme.primary} />
-                </TouchableOpacity>
+          {/* Number Pad */}
+          <View style={styles.numpad}>
+            {[[1, 2, 3], [4, 5, 6], [7, 8, 9]].map((row, rIdx) => (
+              <View key={rIdx} style={styles.numpadRow}>
+                {row.map((num) => (
+                  <TouchableOpacity
+                    key={num}
+                    style={[styles.numKey, { width: KEY_SIZE, height: 56 }]}
+                    disabled={isPinVerifying}
+                    onPress={() => handleNumPress(num)}
+                    activeOpacity={0.4}
+                  >
+                    <Text style={styles.numKeyText}>{num}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
+            ))}
+            <View style={styles.numpadRow}>
+              {/* Empty space (biometric is automatic after PIN, no shortcut) */}
+              <View style={{ width: KEY_SIZE, height: 56 }} />
+              <TouchableOpacity
+                style={[styles.numKey, { width: KEY_SIZE, height: 56 }]}
+                disabled={isPinVerifying}
+                onPress={() => handleNumPress(0)}
+                activeOpacity={0.4}
+              >
+                <Text style={styles.numKeyText}>0</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.numKey, { width: KEY_SIZE, height: 56 }]}
+                disabled={isPinVerifying}
+                onPress={handleBackspace}
+                activeOpacity={0.4}
+              >
+                <Ionicons name="close" size={22} color="#666" />
+              </TouchableOpacity>
             </View>
           </View>
-        ) : (
-          /* Step 2: Biometric Prompt */
-          <View style={styles.authStepContainer}>
-            <View style={[styles.stepBadge, { backgroundColor: theme.primaryLight }]}>
-              <Text style={[styles.stepBadgeText, { color: theme.primary }]}>
-                {language === 'en' ? 'STEP 2 OF 2: BIOMETRIC SCAN' : 'ধাপ ২/২: বায়োমেট্রিক স্ক্যান'}
-              </Text>
-            </View>
 
-            <Animated.View style={{ transform: [{ scale: pulseAnim }], marginVertical: 20 }}>
-              <TouchableOpacity
-                onPress={triggerBiometricAuth}
-                style={[styles.fingerprintCircle, { backgroundColor: theme.cardBg, borderColor: theme.primary }]}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="finger-print" size={54} color={theme.primary} />
-              </TouchableOpacity>
-            </Animated.View>
-
-            <Text style={[styles.biometricTitle, { color: theme.text }]}>
-              {language === 'en' ? 'Scan Fingerprint' : 'ফিঙ্গারপ্রিন্ট দিন'}
-            </Text>
-            <Text style={[styles.biometricSubtitle, { color: theme.textSecondary }]}>
-              {language === 'en'
-                ? 'Touch sensor to complete unlock'
-                : 'আনলক সম্পন্ন করতে সেন্সরে আঙুল দিন'}
-            </Text>
-
-            {biometricError && <Text style={[styles.errorText, { color: theme.error }]}>{biometricError}</Text>}
-
-            <TouchableOpacity style={[styles.retryBioBtn, { backgroundColor: theme.primary }]} onPress={triggerBiometricAuth}>
-              <Text style={styles.retryBioText}>
-                {language === 'en' ? 'Tap to Scan' : 'স্ক্যান করতে ট্যাপ করুন'}
+          {/* Footer */}
+          <View style={styles.footer}>
+            <TouchableOpacity onPress={handleLogout}>
+              <Text style={[styles.footerText, { color: '#999' }]}>
+                {language === 'en' ? 'Logout' : 'লগআউট'}
               </Text>
             </TouchableOpacity>
           </View>
-        )}
+        </>
+      ) : (
+        /* Biometric Step */
+        <View style={styles.biometricSection}>
+          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+            <TouchableOpacity
+              onPress={triggerBiometricAuth}
+              style={[styles.fingerprintCircle, { borderColor: theme.primary }]}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="finger-print" size={56} color={theme.primary} />
+            </TouchableOpacity>
+          </Animated.View>
 
-        {/* Footer Actions */}
-        <View style={styles.footerRow}>
-          <TouchableOpacity onPress={handleSwitchAccount} activeOpacity={0.7} style={styles.footerBtn}>
-            <Text style={[styles.switchAccountText, { color: theme.primary }]}>
-              {language === 'en' ? 'Switch Account' : 'অ্যাকাউন্ট পরিবর্তন'}
+          <Text style={[styles.bioTitle, { color: '#333' }]}>
+            {language === 'en' ? 'Scan Fingerprint' : 'ফিঙ্গারপ্রিন্ট দিন'}
+          </Text>
+          <Text style={[styles.bioSubtitle, { color: '#999' }]}>
+            {language === 'en' ? 'Touch sensor to unlock' : 'আনলক করতে সেন্সরে আঙুল দিন'}
+          </Text>
+
+          {biometricError && (
+            <Text style={[styles.errorText, { color: '#FF3B30' }]}>{biometricError}</Text>
+          )}
+
+          {isBiometricAuthenticating && (
+            <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 12 }} />
+          )}
+
+          <TouchableOpacity
+            style={[styles.retryBtn, { backgroundColor: theme.primary }]}
+            onPress={triggerBiometricAuth}
+          >
+            <Text style={styles.retryBtnText}>
+              {language === 'en' ? 'Tap to Scan' : 'স্ক্যান করুন'}
             </Text>
           </TouchableOpacity>
-          <View style={[styles.footerDivider, { backgroundColor: theme.border }]} />
-          <TouchableOpacity onPress={handleLogout} activeOpacity={0.7} style={styles.footerBtn}>
-            <Text style={[styles.logoutText, { color: theme.error }]}>
-              {language === 'en' ? 'Logout' : 'লগআউট'}
+
+          <TouchableOpacity
+            style={styles.backToPinBtn}
+            onPress={() => { setStep('pin'); setBiometricError(null); }}
+          >
+            <Text style={[styles.backToPinText, { color: theme.primary }]}>
+              {language === 'en' ? 'Use PIN instead' : 'পিন দিয়ে যান'}
             </Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
@@ -372,122 +367,109 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
-  scrollContainer: {
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.xl,
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: '96%',
-  },
+  // Top Bar
   topBar: {
-    width: '100%',
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.sm,
   },
-  languageToggle: {
+  langToggle: {
     flexDirection: 'row',
-    borderRadius: 20,
-    padding: 3,
+    borderRadius: 6,
+    overflow: 'hidden',
   },
   langBtn: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 6,
-    borderRadius: 16,
   },
-  langBtnActive: {},
   langText: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#999',
   },
-  langTextActive: {
-    color: '#FFFFFF',
-  },
+  // Logo
   logoSection: {
     alignItems: 'center',
-    gap: 6,
-    marginTop: Spacing.xs,
-  },
-  logoText: {
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: -0.5,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.md,
   },
   brandSlogan: {
     fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.5,
-    marginTop: -2,
-    marginBottom: 4,
+    marginTop: 6,
   },
-  welcomeTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    marginTop: 4,
+  // Title
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: Spacing.xl,
+    paddingHorizontal: Spacing.xxl,
   },
-  userBadge: {
-    fontSize: 14,
-    fontWeight: '600',
+  // PIN Input
+  pinInputContainer: {
+    paddingHorizontal: Spacing.xxl,
+    marginBottom: Spacing.lg,
   },
-  authStepContainer: {
-    alignItems: 'center',
-    width: '100%',
-    marginVertical: Spacing.md,
-  },
-  stepBadge: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginBottom: 16,
-  },
-  stepBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  dotsRow: {
+  pinInputField: {
     flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'center',
-    marginBottom: 16,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1.5,
+    paddingBottom: 10,
+    paddingHorizontal: 4,
   },
-  dotCircle: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    borderWidth: 1.5,
+  pinDisplay: {
+    fontSize: 18,
+    fontWeight: '600',
+    letterSpacing: 4,
   },
   errorText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     marginTop: 8,
-    textAlign: 'center',
+    marginLeft: 4,
   },
-  keyboardGrid: {
-    gap: 14,
-    width: '100%',
-    paddingHorizontal: Spacing.lg,
-    marginTop: Spacing.sm,
-  },
-  keyboardRow: {
+  // Next Button
+  nextButton: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  circularKey: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 3,
+    height: 52,
+    marginHorizontal: Spacing.xxl,
+    borderRadius: 8,
+    gap: 8,
+    marginBottom: Spacing.lg,
   },
-  circularKeyBlank: {
-    width: 72,
-    height: 72,
-  },
-  circularKeyText: {
-    fontSize: 26,
+  nextButtonText: {
+    fontSize: 16,
     fontWeight: '700',
+  },
+  // Numpad
+  numpad: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  numpadRow: {
+    flexDirection: 'row',
+  },
+  numKey: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  numKeyText: {
+    fontSize: 32,
+    fontWeight: '500',
+    color: '#333',
+  },
+  // Biometric
+  biometricSection: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xxl,
   },
   fingerprintCircle: {
     width: 100,
@@ -496,49 +478,44 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 6,
+    marginBottom: Spacing.xl,
   },
-  biometricTitle: {
+  bioTitle: {
     fontSize: 20,
-    fontWeight: '800',
-  },
-  biometricSubtitle: {
-    fontSize: 13,
-    fontWeight: '500',
-    marginTop: 4,
-  },
-  retryBioBtn: {
-    marginTop: 20,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 24,
-  },
-  retryBioText: {
-    color: '#FFFFFF',
     fontWeight: '700',
+    marginBottom: 4,
+  },
+  bioSubtitle: {
     fontSize: 14,
+    fontWeight: '500',
+    marginBottom: Spacing.lg,
   },
-  footerRow: {
-    flexDirection: 'row',
+  retryBtn: {
+    paddingHorizontal: 32,
+    paddingVertical: 14,
+    borderRadius: 8,
+    marginTop: Spacing.md,
+  },
+  retryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  backToPinBtn: {
+    marginTop: Spacing.xl,
+    paddingVertical: 8,
+  },
+  backToPinText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Footer
+  footer: {
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.sm,
-    gap: 12,
+    paddingVertical: Spacing.lg,
   },
-  footerBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-  },
-  footerDivider: {
-    width: 1,
-    height: 14,
-  },
-  switchAccountText: {
+  footerText: {
     fontSize: 13,
-    fontWeight: '700',
-  },
-  logoutText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '600',
   },
 });

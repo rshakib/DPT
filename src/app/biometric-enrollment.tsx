@@ -45,6 +45,8 @@ export default function BiometricEnrollment() {
   const nid = String(rawNid || '').trim();
   const activationCode = String(rawCode || '').trim();
   const username = String(rawUser || '').toLowerCase().trim();
+  const rawFullName = Array.isArray(params.fullName) ? params.fullName[0] : params.fullName;
+  const fullName = String(rawFullName || '').trim();
 
   // Biometrics State
   const [authStatus, setAuthStatus] = useState<AuthStatus>('idle');
@@ -136,6 +138,7 @@ export default function BiometricEnrollment() {
         nid,
         activationCode,
         username,
+        fullName,
       },
     });
   };

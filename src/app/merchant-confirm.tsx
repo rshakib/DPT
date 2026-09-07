@@ -61,7 +61,7 @@ export default function MerchantConfirm() {
       onAuthorized={handleAuthorized}
       onCancel={handleCancel}
       onVerifyPin={handleVerifyPin}
-      pinLength={8}
+      pinLength={5}
     />
   );
 }

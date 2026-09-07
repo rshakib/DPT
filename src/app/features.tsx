@@ -48,12 +48,9 @@ export default function Features() {
     router.push('/qr-pay');
   };
 
-  const handleSimulateNfc = () => {
-    // MOCK — real NFC hardware integration later
-    Alert.alert(
-      language === 'en' ? 'NFC Payment' : 'এনএফসি পেমেন্ট',
-      t.nfcPaymentSimulatedAlert
-    );
+  const handleNfcTransfer = () => {
+    // Navigate to real NFC P2P transfer screen
+    router.push('/nfc-transfer');
   };
 
   const handleLinkCard = () => {
@@ -167,8 +164,8 @@ export default function Features() {
           'nfc',
           t.nfcPaymentTitle,
           t.nfcPaymentDesc,
-          t.simulateNfcPaymentButton,
-          handleSimulateNfc,
+          language === 'en' ? 'Start NFC Transfer' : 'NFC ট্রান্সফার শুরু করুন',
+          handleNfcTransfer,
           'wifi-outline'
         )}
 

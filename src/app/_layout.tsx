@@ -11,6 +11,7 @@ import { ThemeProvider, useAppTheme } from '../context/ThemeContext';
 import { LanguageProvider } from '../context/LanguageContext';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { AppLockProvider, useAppLock } from '../context/AppLockContext';
+import { ReconciliationPopup } from '../components/ReconciliationPopup';
 
 function RootLayoutContent() {
   const { theme, isDarkMode } = useAppTheme();
@@ -90,6 +91,7 @@ function RootLayoutContent() {
         <Stack.Screen name="qr-pay" />
         <Stack.Screen name="qr-amount" />
         <Stack.Screen name="qr-pay-confirm" />
+        <Stack.Screen name="nfc-transfer" />
         <Stack.Screen name="history" />
         <Stack.Screen name="my-qr" />
         <Stack.Screen name="features" />
@@ -99,6 +101,7 @@ function RootLayoutContent() {
         <Stack.Screen name="transaction-processing" />
         <Stack.Screen name="transaction-result" />
       </Stack>
+      {isAuthenticated && !isLocked && <ReconciliationPopup />}
     </>
   );
 }

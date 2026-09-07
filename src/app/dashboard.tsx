@@ -71,6 +71,8 @@ export default function Dashboard() {
   const { user, updateUser, logout } = useAuth();
 
   const [showBalance, setShowBalance] = useState(true);
+  const [profileImage, setProfileImage] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState(user?.full_name || user?.username || '');
 
   // Dynamic API Fetching States
   const [balanceLoading, setBalanceLoading] = useState(true);
@@ -171,6 +173,17 @@ export default function Dashboard() {
 
       fetchDashboardData();
 
+      // Load profile image from SQLite and display name from user object
+      if (user?.username) {
+        db.getProfileImage(user.username).then((img) => {
+          if (img) setProfileImage(img);
+        });
+        // Use full_name from user object (set during login)
+        if (user.full_name) {
+          setDisplayName(user.full_name);
+        }
+      }
+
       const unsubscribe = syncService.subscribe(async () => {
         const currentUsername = user?.username;
         if (currentUsername) {
@@ -225,7 +238,7 @@ export default function Dashboard() {
               {t.welcomeBack || 'Welcome Back'}
             </Text>
             <Text style={[styles.userNameText, { color: theme.text }]}>
-              {user?.username ? (user.username.charAt(0).toUpperCase() + user.username.slice(1)) : 'Shakib Ahmed'}
+              {displayName || user?.username || 'User'}
             </Text>
           </View>
           <TouchableOpacity
@@ -233,7 +246,14 @@ export default function Dashboard() {
             onPress={() => handleNavigate('/profile')}
             activeOpacity={0.8}
           >
-            <Ionicons name="person" size={22} color={theme.primary} />
+            {profileImage ? (
+              <Image
+                source={{ uri: `data:image/jpeg;base64,${profileImage}` }}
+                style={styles.profileButtonImage}
+              />
+            ) : (
+              <Ionicons name="person" size={22} color={theme.primary} />
+            )}
           </TouchableOpacity>
         </View>
 
@@ -312,7 +332,7 @@ export default function Dashboard() {
             <GridItem title={t.cashOut || 'Cash Out'} iconName="cash-outline" route="/cashout" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
             <GridItem title={t.qrPay || 'QR Pay'} iconName="qr-code-outline" route="/qr-pay" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
             <GridItem title={t.transactionHistory || 'Transaction History'} iconName="time-outline" route="/history" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
-            <GridItem title={t.myQr || 'My QR'} iconName="qr-code" route="/my-qr" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
+            <GridItem title="NFC Transfer" iconName="wifi-outline" route="/nfc-transfer" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
           </View>
         </View>
 
@@ -376,7 +396,17 @@ export default function Dashboard() {
               return (
                 <TouchableOpacity
                   key={mapped.id}
-                  style={[styles.transactionCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
+                  style={[
+                    styles.transactionCard,
+                    {
+                      backgroundColor: mapped.isOfflinePending
+                        ? (isDarkMode ? 'rgba(255, 56, 56, 0.08)' : '#FFF5F5')
+                        : theme.cardBg,
+                      borderColor: mapped.isOfflinePending
+                        ? (isDarkMode ? 'rgba(255, 56, 56, 0.2)' : '#FFD2D2')
+                        : theme.border,
+                    },
+                  ]}
                   onPress={() => handleNavigate('/history')}
                   activeOpacity={0.7}
                 >
@@ -394,10 +424,18 @@ export default function Dashboard() {
                     <Text
                       style={[
                         styles.txStatus,
-                        { color: mapped.status.includes('Successful') || mapped.status.includes('সফল') ? theme.success : theme.error }
+                        {
+                          color: mapped.isOfflinePending
+                            ? theme.error
+                            : mapped.status.includes('Successful') || mapped.status.includes('সফল')
+                            ? theme.success
+                            : theme.error
+                        }
                       ]}
                     >
-                      {mapped.status}
+                      {mapped.isOfflinePending
+                        ? (language === 'en' ? 'Offline Queue' : 'অফলাইন কিউ')
+                        : mapped.status}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -481,11 +519,17 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
     shadowColor: Colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 1,
+  },
+  profileButtonImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
   },
   balanceCard: {
     borderRadius: 24,
