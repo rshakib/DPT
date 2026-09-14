@@ -34,17 +34,9 @@ export interface NFCTransferPayload {
   nonce: string;
 }
 
+// P0 FIX: Always send full payload format for consistency between native and JS
 export function toCompactNfcPayload(payload: NFCTransferPayload): string {
-  return JSON.stringify({
-    t: 'DPT',
-    v: payload.version,
-    s: payload.sender,
-    r: payload.receiver,
-    a: payload.amount,
-    m: payload.timestamp,
-    i: payload.txid,
-    n: payload.nonce,
-  });
+  return JSON.stringify(payload);
 }
 
 export function fromNfcPayload(raw: any): NFCTransferPayload | null {
@@ -57,9 +49,11 @@ export function fromNfcPayload(raw: any): NFCTransferPayload | null {
       return null;
     }
   }
+  // Accept full format
   if (obj?.type === 'DPT_P2P_TRANSFER') {
     return obj as NFCTransferPayload;
   }
+  // Accept compact format (backward compatibility)
   if (obj?.t === 'DPT') {
     return {
       type: 'DPT_P2P_TRANSFER',
@@ -73,6 +67,29 @@ export function fromNfcPayload(raw: any): NFCTransferPayload | null {
     };
   }
   return null;
+}
+
+// P1 FIX: Validate incoming NFC payload on receiver side
+export function validateNfcPayload(payload: NFCTransferPayload): { valid: boolean; error?: string } {
+  if (!payload) {
+    return { valid: false, error: 'Empty payload' };
+  }
+  if (payload.type !== 'DPT_P2P_TRANSFER') {
+    return { valid: false, error: 'Invalid payload type' };
+  }
+  if (!payload.sender || payload.sender.length < 1) {
+    return { valid: false, error: 'Missing sender' };
+  }
+  if (!payload.amount || payload.amount <= 0) {
+    return { valid: false, error: 'Invalid amount' };
+  }
+  if (!payload.txid || payload.txid.length < 1) {
+    return { valid: false, error: 'Missing transaction ID' };
+  }
+  if (!payload.nonce || payload.nonce.length < 1) {
+    return { valid: false, error: 'Missing nonce' };
+  }
+  return { valid: true };
 }
 
 export function isDptHceModuleAvailable(): boolean {
@@ -129,7 +146,6 @@ function bytesToString(bytes: number[]): string {
 
 /**
  * Activate Native Host Card Emulation (HCE) on Receiver device.
- * Emulates an ISO 14443-4 Smart Card with AID F0010203040506.
  */
 export async function startHceReceiver(username: string): Promise<boolean> {
   if (Platform.OS === 'android' && DptHceModule?.setReceiverActive) {
@@ -161,7 +177,6 @@ export async function stopHceReceiver(): Promise<void> {
 
 /**
  * Actively pop any buffered payment received via HCE.
- * Guarantees zero packet loss if event listener was delayed.
  */
 export async function popReceivedPayment(): Promise<NFCTransferPayload | null> {
   if (Platform.OS === 'android' && DptHceModule?.popLatestReceivedPayment) {
@@ -193,9 +208,6 @@ export function subscribeHcePayment(
     (event: { payload: string }) => {
       try {
         const rawJson = typeof event?.payload === 'string' ? event.payload : JSON.stringify(event);
-        const parsed: NFCTransferPayload = JSON.parse(rawJson);
-        console.log('[NFC-HCE] Incoming payment received via HCE:', parsed);
-        callback(parsed);
         const parsed = fromNfcPayload(rawJson);
         if (parsed) {
           console.log('[NFC-HCE] Incoming payment received via HCE event:', parsed);
@@ -218,18 +230,17 @@ export function subscribeHcePayment(
 
 /**
  * Send money phone-to-phone via ISO-DEP APDUs (Sender side).
- * High-speed native ReaderMode on Android bypasses OS NDEF checks for instant P2P transfer.
  */
 export async function sendIsoDepPayment(
   payload: NFCTransferPayload
 ): Promise<{ success: boolean; receiver: string }> {
-  // Method 1: High-speed native Android ReaderMode (Direct ISO 14443-4 HCE connection)
+  // Method 1: High-speed native Android ReaderMode
   if (Platform.OS === 'android' && DptHceModule?.sendPaymentNative) {
     try {
       console.log('[NFC-IsoDep] Initiating native high-speed ReaderMode...');
-      const result = await DptHceModule.sendPaymentNative(JSON.stringify(payload));
-      const compactJson = toCompactNfcPayload(payload);
-      const result = await DptHceModule.sendPaymentNative(compactJson);
+      // P0 FIX: Send full payload format for consistency
+      const fullJson = JSON.stringify(payload);
+      const result = await DptHceModule.sendPaymentNative(fullJson);
       console.log('[NFC-IsoDep] Native payment result:', result);
       return {
         success: Boolean(result?.success),
@@ -283,7 +294,7 @@ export async function sendIsoDepPayment(
       } catch (_) {}
     }
 
-    // Step 2: Send payment payload APDU: CLA=0x80, INS=0xB0, P1=0x00, P2=0x00
+    // Step 2: Send payment payload APDU
     const finalPayload = { ...payload, receiver: detectedReceiver || payload.receiver };
     const payloadBytes = stringToBytes(JSON.stringify(finalPayload));
 
@@ -372,97 +383,6 @@ export async function stopNFC(): Promise<void> {
   try {
     NfcManager.unregisterTagEvent();
   } catch (e) {}
-}
-
-/**
- * Write transfer data via NFC (Sender side).
- * Uses NDEF message to send transfer payload.
- */
-export async function writeTransferNDEF(payload: NFCTransferPayload): Promise<boolean> {
-  if (!NfcManager || !Ndef) return false;
-
-  try {
-    await NfcManager.start();
-
-    // Request NFC tech
-    await NfcManager.requestTechnology(NfcTech.Ndef);
-
-    // Create NDEF message from payload
-    const payloadBytes = Ndef.encodeMessage([
-      Ndef.textRecord(JSON.stringify(payload)),
-    ]);
-
-    if (payloadBytes) {
-      await NfcManager.ndefHandler.writeNdefMessage(payloadBytes);
-      console.log('[NFC] Transfer data written successfully');
-      return true;
-    }
-    return false;
-  } catch (e: any) {
-    console.warn('[NFC] Write failed:', e);
-    const msg = e?.message || '';
-    if (msg.includes('cancel') || msg.includes('cancelled')) {
-      throw new Error('NFC session cancelled.');
-    }
-    throw new Error(
-      'NFC write requires an NFC smartcard or tag. Modern Android does not support direct phone-to-phone Beam.'
-    );
-  } finally {
-    try {
-      await NfcManager.cancelTechnologyRequest();
-    } catch (e) {}
-  }
-}
-
-/**
- * Read transfer data via NFC (Receiver side).
- * Listens for NDEF messages and parses transfer payload.
- */
-export async function readTransferNDEF(): Promise<NFCTransferPayload | null> {
-  if (!NfcManager || !Ndef) return null;
-
-  try {
-    await NfcManager.start();
-
-    // Register for tag discovery
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        try { NfcManager.unregisterTagEvent(); } catch (_) {}
-        reject(new Error('NFC read timeout: No compatible NFC tag or smartcard detected.'));
-      }, 15000); // 15-second timeout
-
-      NfcManager.registerTagEvent((tag: any) => {
-        clearTimeout(timeout);
-        try { NfcManager.unregisterTagEvent(); } catch (_) {}
-
-        try {
-          if (tag.ndefMessage && tag.ndefMessage.length > 0) {
-            const record = tag.ndefMessage[0];
-            if (record.type === Ndef.TNF_WELL_KNOWN && record.payload) {
-              const text = Ndef.text.decodePayload(record.payload);
-              const payload = JSON.parse(text);
-
-              if (payload.type === 'DPT_P2P_TRANSFER' && payload.version === 1) {
-                console.log('[NFC] Transfer data received:', payload);
-                resolve(payload);
-              } else {
-                reject(new Error('Invalid NFC transfer payload received.'));
-              }
-            } else {
-              reject(new Error('No NDEF text record found on this NFC tag.'));
-            }
-          } else {
-            reject(new Error('Tag detected, but no transfer NDEF message found. Modern Android requires an NFC card or HCE terminal.'));
-          }
-        } catch (parseErr) {
-          reject(parseErr);
-        }
-      });
-    });
-  } catch (e: any) {
-    console.warn('[NFC] Read failed:', e);
-    throw e;
-  }
 }
 
 /**

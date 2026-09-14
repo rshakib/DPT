@@ -27,10 +27,13 @@ class DptHceService : HostApduService() {
         @Volatile
         var receiverUsername: String = ""
 
-        var paymentCallback: ((String) -> Unit)? = null
         // Thread-safe buffer to guarantee ZERO packet loss even if event listener is delayed
         @Volatile
         private var lastReceivedPayment: String? = null
+
+        // Callbacks for JS event emission
+        var paymentCallback: ((String) -> Unit)? = null
+        var deactivatedCallback: ((Int) -> Unit)? = null
 
         fun popLastPayment(): String? {
             val payment = lastReceivedPayment
@@ -41,6 +44,13 @@ class DptHceService : HostApduService() {
         fun peekLastPayment(): String? = lastReceivedPayment
 
         fun clearLastPayment() {
+            lastReceivedPayment = null
+        }
+
+        // P1 FIX: Reset all static state (call on app launch to prevent stale state)
+        fun resetState() {
+            isReceiverActive = false
+            receiverUsername = ""
             lastReceivedPayment = null
         }
     }
@@ -55,18 +65,13 @@ class DptHceService : HostApduService() {
 
         Log.d(TAG, "processCommandApdu: CLA=0x${Integer.toHexString(cla)}, INS=0x${Integer.toHexString(ins)}, size=${commandApdu.size}")
 
-        // 1. SELECT AID COMMAND: 00 A4 04 00 [Lc] [AID]
         // 1. SELECT AID COMMAND: 00 A4 04 00 [Lc] [AID] (with or without Le)
         if (cla == 0x00 && ins == 0xA4) {
             if (!isReceiverActive) {
-                Log.w(TAG, "SELECT received, but receiver is not active.")
-                val notReadyMsg = "{\"status\":\"INACTIVE\"}".toByteArray(StandardCharsets.UTF_8)
-                return notReadyMsg + SW_SUCCESS
                 Log.w(TAG, "SELECT AID received, but receiver is not active.")
                 return SW_ERROR
             }
 
-            Log.i(TAG, "SELECT AID matched for user: $receiverUsername")
             Log.i(TAG, "SELECT AID matched! Receiver ready: @$receiverUsername")
             val respJson = "{\"status\":\"READY\",\"receiver\":\"$receiverUsername\"}"
             val respBytes = respJson.toByteArray(StandardCharsets.UTF_8)
@@ -79,7 +84,6 @@ class DptHceService : HostApduService() {
 
             // Safely parse data bytes
             val lc = commandApdu[4].toInt() and 0xFF
-            val dataBytes = if (commandApdu.size >= 5 + lc && lc > 0) {
             val dataBytes = if (lc > 0 && commandApdu.size >= 5 + lc) {
                 commandApdu.copyOfRange(5, 5 + lc)
             } else {
@@ -89,12 +93,10 @@ class DptHceService : HostApduService() {
             val paymentJson = String(dataBytes, StandardCharsets.UTF_8)
             Log.i(TAG, ">>> PAYMENT PACKET RECEIVED (${dataBytes.size} bytes): $paymentJson <<<")
 
-            Log.i(TAG, "Payment APDU payload received: $paymentJson")
             // Store in memory buffer immediately so polling catches it even if event listener missed it
             lastReceivedPayment = paymentJson
 
-            // Notify React Native listener
-            // Emit event directly to React Native and trigger haptic feedback
+            // Emit event via callback and static method
             try {
                 paymentCallback?.invoke(paymentJson)
                 DptHceModule.emitPaymentReceived(paymentJson)
@@ -111,7 +113,13 @@ class DptHceService : HostApduService() {
         return SW_ERROR
     }
 
+    // P1 FIX: Notify JS layer when NFC field is lost
     override fun onDeactivated(reason: Int) {
         Log.d(TAG, "onDeactivated: reason=$reason")
+        try {
+            deactivatedCallback?.invoke(reason)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to invoke deactivated callback", e)
+        }
     }
 }

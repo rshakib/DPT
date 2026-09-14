@@ -29,6 +29,7 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
         const val MODULE_NAME = "DptHceModule"
         const val EVENT_PAYMENT_RECEIVED = "onNfcHcePaymentReceived"
         private const val TAG = "DptHceModule"
+        private const val MAX_PAYLOAD_BYTES = 200
 
         private var instance: DptHceModule? = null
 
@@ -38,8 +39,6 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
             0x04.toByte(), 0x05.toByte(), 0x06.toByte()
         )
 
-        // APDU: SELECT AID (00 A4 04 00 07 F0 01 02 03 04 05 06 00)
-        val SELECT_AID_APDU = byteArrayOf(
         // APDU: SELECT AID with Le (00 A4 04 00 07 F0 01 02 03 04 05 06 00)
         val SELECT_AID_APDU_WITH_LE = byteArrayOf(
             0x00.toByte(), // CLA
@@ -81,10 +80,8 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
     init {
         instance = this
         reactContext.addLifecycleEventListener(this)
-        DptHceService.paymentCallback = { json ->
-            triggerSuccessVibration()
-            sendEvent(EVENT_PAYMENT_RECEIVED, json)
-        }
+        // P1 FIX: Reset HCE state on app launch to prevent stale state from previous session
+        DptHceService.resetState()
     }
 
     override fun getName(): String {
@@ -107,19 +104,6 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
             val activity = currentActivity
             val component = ComponentName(reactContext, DptHceService::class.java)
 
-            // Dynamic component toggle
-            val newState = if (active) {
-                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-            } else {
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-            }
-            reactContext.packageManager.setComponentEnabledSetting(
-                component,
-                newState,
-                PackageManager.DONT_KILL_APP
-            )
-
-            // Dynamic foreground service preference routing
             // Foreground service preference routing without disabling component in OS
             activity?.let { act ->
                 act.runOnUiThread {
@@ -139,8 +123,6 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
                             }
 
                             if (active) {
-                                cardEmulation.setPreferredService(act, component)
-                                Log.i(TAG, "CardEmulation.setPreferredService ENABLED for DptHceService")
                                 val ok = cardEmulation.setPreferredService(act, component)
                                 Log.i(TAG, "CardEmulation.setPreferredService result: $ok for DptHceService")
                             } else {
@@ -180,6 +162,13 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
             return
         }
 
+        // P0 FIX: Validate payload size before sending
+        val payloadBytes = payloadJson.toByteArray(StandardCharsets.UTF_8)
+        if (payloadBytes.size > MAX_PAYLOAD_BYTES) {
+            promise.reject("PAYLOAD_TOO_LARGE", "NFC payload exceeds ${MAX_PAYLOAD_BYTES} bytes (${payloadBytes.size}). Use shorter usernames.")
+            return
+        }
+
         // Cancel previous pending operation if any
         cancelPendingSend("SUPERSEDED", "A new payment was initiated")
 
@@ -199,7 +188,6 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
                 val options = Bundle().apply {
                     putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, 250)
                 }
-                // Exclusively target ISO 14443-4 A cards & completely bypass OS NDEF detection
                 // Target both ISO 14443-4 Type A & Type B cards, bypass OS NDEF detection
                 val flags = NfcAdapter.FLAG_READER_NFC_A or
                         NfcAdapter.FLAG_READER_NFC_B or
@@ -207,7 +195,6 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
                         NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
 
                 nfcAdapter.enableReaderMode(activity, readerCallback, flags, options)
-                Log.i(TAG, "Native ReaderMode enabled with FLAG_READER_NFC_A & SKIP_NDEF_CHECK")
                 Log.i(TAG, "Native ReaderMode enabled with NFC_A & NFC_B & SKIP_NDEF_CHECK")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to enable native ReaderMode", e)
@@ -245,21 +232,14 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
             isoDep.connect()
             isoDep.timeout = 6000 // 6 seconds connection timeout
 
-            // 1. SELECT AID
             // 1. SELECT AID (Try with Le first, fallback to without Le)
             Log.d(TAG, "Transceiving SELECT AID APDU...")
-            val selectResponse = isoDep.transceive(SELECT_AID_APDU)
-            if (selectResponse == null || selectResponse.size < 2) {
-                Log.w(TAG, "SELECT AID response invalid (null or < 2 bytes)")
-                return@ReaderCallback
             var selectResponse = try {
                 isoDep.transceive(SELECT_AID_APDU_WITH_LE)
             } catch (e: Exception) {
                 null
             }
 
-            val sw1 = selectResponse[selectResponse.size - 2].toInt() and 0xFF
-            val sw2 = selectResponse[selectResponse.size - 1].toInt() and 0xFF
             var isSelectOk = false
             if (selectResponse != null && selectResponse.size >= 2) {
                 val sw1 = selectResponse[selectResponse.size - 2].toInt() and 0xFF
@@ -269,8 +249,6 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
                 }
             }
 
-            if (sw1 != 0x90 || sw2 != 0x00) {
-                Log.w(TAG, "Receiver not ready: SW=0x${Integer.toHexString(sw1)} 0x${Integer.toHexString(sw2)}")
             if (!isSelectOk) {
                 Log.d(TAG, "SELECT AID with Le failed, retrying without Le...")
                 selectResponse = try {
@@ -287,8 +265,10 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
                 }
             }
 
+            // P0 FIX: Reject promise immediately when SELECT AID fails
             if (!isSelectOk || selectResponse == null || selectResponse.size < 2) {
                 Log.w(TAG, "SELECT AID rejected by card target")
+                cancelPendingSend("SELECT_FAILED", "Receiver phone not ready. Make sure receiver is on the Receive screen.")
                 return@ReaderCallback
             }
 
@@ -309,19 +289,20 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
 
             // 2. PROCESS PAYMENT APDU: CLA=0x80, INS=0xB0, P1=0x00, P2=0x00, Lc, Data...
             val payloadStr = pendingSendPayload ?: ""
-            val payloadBytes = payloadStr.toByteArray(StandardCharsets.UTF_8)
-            val paymentApdu = ByteArray(5 + payloadBytes.size)
+            val sendDataBytes = payloadStr.toByteArray(StandardCharsets.UTF_8)
+            val paymentApdu = ByteArray(5 + sendDataBytes.size)
             paymentApdu[0] = 0x80.toByte() // CLA
             paymentApdu[1] = 0xB0.toByte() // INS
             paymentApdu[2] = 0x00.toByte() // P1
             paymentApdu[3] = 0x00.toByte() // P2
-            paymentApdu[4] = (payloadBytes.size and 0xFF).toByte() // Lc
-            System.arraycopy(payloadBytes, 0, paymentApdu, 5, payloadBytes.size)
+            paymentApdu[4] = (sendDataBytes.size and 0xFF).toByte() // Lc
+            System.arraycopy(sendDataBytes, 0, paymentApdu, 5, sendDataBytes.size)
 
-            Log.i(TAG, "Transceiving PROCESS_PAYMENT APDU (${payloadBytes.size} bytes)...")
+            Log.i(TAG, "Transceiving PROCESS_PAYMENT APDU (${sendDataBytes.size} bytes)...")
             val payResponse = isoDep.transceive(paymentApdu)
             if (payResponse == null || payResponse.size < 2) {
                 Log.w(TAG, "PROCESS_PAYMENT response invalid")
+                cancelPendingSend("PAYMENT_NO_RESPONSE", "Payment transmission failed: no confirmation from receiver.")
                 return@ReaderCallback
             }
 
@@ -348,12 +329,16 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
                 disableReaderModeSafe()
                 promise?.resolve(resultMap)
             } else {
+                // P0 FIX: Reject promise when receiver rejects payment
                 Log.w(TAG, "Payment rejected by receiver with SW: $paySw1 $paySw2")
+                cancelPendingSend("PAYMENT_REJECTED", "Receiver rejected the payment payload.")
             }
         } catch (e: IOException) {
-            Log.w(TAG, "NFC contact lost or APDU transceive failed: ${e.message}. Retrying on next tap...")
+            Log.w(TAG, "NFC contact lost or APDU transceive failed: ${e.message}")
+            cancelPendingSend("NFC_IO_ERROR", "NFC connection lost. Please try again.")
         } catch (e: Exception) {
             Log.e(TAG, "Unexpected error in readerCallback", e)
+            cancelPendingSend("NFC_ERROR", "NFC error: ${e.message}")
         } finally {
             try {
                 isoDep.close()
@@ -458,10 +443,6 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
             val params = Arguments.createMap().apply {
                 putString("payload", data)
             }
-            reactContext
-                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                .emit(eventName, params)
-            Log.i(TAG, "Emitted event $eventName with payload")
             if (reactContext.hasActiveReactInstance()) {
                 reactContext.runOnJSQueueThread {
                     try {
@@ -477,7 +458,6 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
                 Log.w(TAG, "Cannot emit event $eventName: React instance not active")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to emit event $eventName", e)
             Log.e(TAG, "Failed to prepare event $eventName", e)
         }
     }
@@ -525,4 +505,3 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
         cancelPendingSend("DESTROYED", "Activity destroyed")
     }
 }
-

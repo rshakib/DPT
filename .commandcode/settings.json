@@ -8,7 +8,8 @@
       "Shell(curl -s -X POST http://192.168.0.212:5001/login -H Content-Type: application/json -d {\"username\":\"shakil\",\"password\":\"12345\"} 2 >& 1)",
       "Shell(python3 -m json.tool)",
       "Shell(ls /opt/android* 2>/dev/null; ls /usr/lib/android* 2>/dev/null; ls /home/shaki/Android 2>/dev/null; ls /snap/android* 2>/dev/null; echo \"ANDROID_HOME=$ANDROID_HOME\"; which adb 2>/dev/null)",
-      "Shell(cd \"/run/media/shaki/2472D89F72D87750/Main DPT/DPT\" && git add -A && git commit -F - <<'EOF' NFC audit checkpoint - before P0/P1/P2 fixes Rollback point before fixing all NFC issues identified in audit. Co-authored-by: CommandCodeBot <noreply@commandcode.ai> EOF)"
+      "Shell(cd \"/run/media/shaki/2472D89F72D87750/Main DPT/DPT\" && git add -A && git commit -F - <<'EOF' NFC audit checkpoint - before P0/P1/P2 fixes Rollback point before fixing all NFC issues identified in audit. Co-authored-by: CommandCodeBot <noreply@commandcode.ai> EOF)",
+      "Shell(git:*)"
     ],
     "deny": [],
     "defaultMode": "default"

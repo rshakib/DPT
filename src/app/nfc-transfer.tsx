@@ -9,7 +9,6 @@ import {
   Dimensions,
   Alert,
   ActivityIndicator,
-  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,8 +22,6 @@ import { TransactionAuthScreen } from '../components/TransactionAuthScreen';
 import {
   isNFCAvailable,
   stopNFC,
-  writeTransferNDEF,
-  readTransferNDEF,
   generateNFCTransferId,
   generateNonce,
   NFCTransferPayload,
@@ -33,7 +30,7 @@ import {
   subscribeHcePayment,
   sendIsoDepPayment,
   popReceivedPayment,
-  isDptHceModuleAvailable,
+  validateNfcPayload,
 } from '../services/nfc';
 import * as db from '../services/db';
 import { syncService } from '../services/sync';
@@ -60,6 +57,8 @@ export default function NFCTransfer() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const hceSubRef = useRef<{ unsubscribe: () => void } | null>(null);
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // P0 FIX: Mutex to prevent double processing of same payment
+  const paymentProcessedRef = useRef(false);
 
   useEffect(() => {
     checkNFC();
@@ -105,10 +104,11 @@ export default function NFCTransfer() {
   const handleReceivePress = () => {
     setMode('receive');
     setStep('waiting-tap');
+    paymentProcessedRef.current = false; // Reset mutex
     startReceiver();
   };
 
-  // Local hardware-isolated PIN verification (Salted SHA-256 + 3-strike brute-force lockout)
+  // Local hardware-isolated PIN verification
   const handleVerifyPin = async (pinInput: string) => {
     if (!user?.username) {
       return {
@@ -153,10 +153,11 @@ export default function NFCTransfer() {
       return;
     }
     setStep('waiting-tap');
+    paymentProcessedRef.current = false; // Reset mutex
     startSender(amountNum);
   };
 
-  // NFC SEND (Phone-to-Phone IsoDep + Physical NDEF Fallback)
+  // NFC SEND (Phone-to-Phone IsoDep)
   const startSender = async (amountNum: number) => {
     setIsProcessing(true);
     setErrorMessage('');
@@ -173,46 +174,11 @@ export default function NFCTransfer() {
         nonce: generateNonce(),
       };
 
-      // 1. Try Mobile-to-Mobile IsoDep HCE transfer first
-      let transferSuccess = false;
-      let targetReceiver = '';
+      console.log('[NFC-Sender] Attempting IsoDep connection to receiver phone...');
+      const isoDepResult = await sendIsoDepPayment(payload);
 
-      try {
-        console.log('[NFC-Sender] Attempting IsoDep connection to receiver phone...');
-        const isoDepResult = await sendIsoDepPayment(payload);
-        if (isoDepResult.success) {
-          transferSuccess = true;
-          targetReceiver = isoDepResult.receiver;
-        }
-      } catch (isoDepErr: any) {
-        if (isoDepErr?.code === 'CANCELLED' || isoDepErr?.message?.includes('cancelled')) {
-          setStep('choose');
-          setMode(null);
-          return;
-        }
-
-        console.log('[NFC-Sender] IsoDep failed:', isoDepErr?.message);
-        // If not Android native HCE or user wants physical card fallback:
-        if (Platform.OS !== 'android') {
-          try {
-            const ndefSuccess = await writeTransferNDEF(payload);
-            if (ndefSuccess) {
-              const receiverPayload = await readTransferNDEF();
-              if (receiverPayload && receiverPayload.type === 'DPT_P2P_TRANSFER') {
-                transferSuccess = true;
-                targetReceiver = receiverPayload.sender;
-              }
-            }
-          } catch (_) {
-            throw isoDepErr;
-          }
-        } else {
-          throw isoDepErr;
-        }
-      }
-
-      if (transferSuccess) {
-        const finalPayload = { ...payload, receiver: targetReceiver || 'receiver' };
+      if (isoDepResult.success) {
+        const finalPayload = { ...payload, receiver: isoDepResult.receiver || 'receiver' };
 
         await saveLocalTransaction(finalPayload);
 
@@ -243,9 +209,15 @@ export default function NFCTransfer() {
             : `৳${amountNum} @${finalPayload.receiver}-এ পাঠানো হয়েছে`
         );
       } else {
-        throw new Error(language === 'en' ? 'NFC transfer could not be completed.' : 'NFC ট্রান্সফার সম্পন্ন করা সম্ভব হয়নি।');
+        throw new Error(language === 'en' ? 'NFC transfer could not be completed.' : 'NFC ট্রান্সফার সম্পন্ন করা সম্ভব হয়নি।');
       }
     } catch (e: any) {
+      // Handle cancellation gracefully
+      if (e?.code === 'CANCELLED' || e?.message?.includes('cancelled')) {
+        setStep('choose');
+        setMode(null);
+        return;
+      }
       setErrorMessage(e.message || (language === 'en' ? 'Transfer failed' : 'ট্রান্সফার ব্যর্থ'));
       setStep('error');
     } finally {
@@ -254,38 +226,52 @@ export default function NFCTransfer() {
     }
   };
 
-  // NFC RECEIVE (Host Card Emulation for Phone-to-Phone + Physical Tag Fallback)
+  // P0 FIX: Process incoming payment with mutex guard
   const processIncomingPayment = async (senderPayload: NFCTransferPayload) => {
-    if (senderPayload && senderPayload.type === 'DPT_P2P_TRANSFER') {
-      try {
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
+    // P1 FIX: Validate payload before processing
+    const validation = validateNfcPayload(senderPayload);
+    if (!validation.valid) {
+      console.warn('[NFC-Receiver] Invalid payload rejected:', validation.error);
+      return;
+    }
 
-        await saveLocalTransaction({ ...senderPayload, receiver: user!.username });
+    // P0 FIX: Mutex guard - prevent double processing
+    if (paymentProcessedRef.current) {
+      console.log('[NFC-Receiver] Payment already processed, ignoring duplicate');
+      return;
+    }
+    paymentProcessedRef.current = true;
 
-        const newBalance = (user!.balance || 0) + senderPayload.amount;
-        await updateUser({ ...user!, balance: newBalance });
-        await db.saveCachedUser(user!.username, { ...user, balance: newBalance });
-
-        syncService.notifyDataChanged();
-        syncService.forceSync(user!.username);
-
-        setSuccessData(senderPayload);
-        setStep('success');
-
-        Alert.alert(
-          language === 'en' ? 'Received!' : 'পেয়েছেন!',
-          language === 'en'
-            ? `৳${senderPayload.amount} from @${senderPayload.sender}`
-            : `৳${senderPayload.amount} @${senderPayload.sender}-এর কাছ থেকে`
-        );
-      } catch (err: any) {
-        console.error('[NFC-Receiver] Error saving incoming payment:', err);
-      } finally {
-        await stopHceReceiver();
+    try {
+      // Stop polling immediately
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
+
+      await saveLocalTransaction({ ...senderPayload, receiver: user!.username });
+
+      const newBalance = (user!.balance || 0) + senderPayload.amount;
+      await updateUser({ ...user!, balance: newBalance });
+      await db.saveCachedUser(user!.username, { ...user, balance: newBalance });
+
+      syncService.notifyDataChanged();
+      syncService.forceSync(user!.username);
+
+      setSuccessData(senderPayload);
+      setStep('success');
+
+      Alert.alert(
+        language === 'en' ? 'Received!' : 'পেয়েছেন!',
+        language === 'en'
+          ? `৳${senderPayload.amount} from @${senderPayload.sender}`
+          : `৳${senderPayload.amount} @${senderPayload.sender}-এর কাছ থেকে`
+      );
+    } catch (err: any) {
+      console.error('[NFC-Receiver] Error saving incoming payment:', err);
+      paymentProcessedRef.current = false; // Reset on error to allow retry
+    } finally {
+      await stopHceReceiver();
     }
   };
 
@@ -299,7 +285,6 @@ export default function NFCTransfer() {
       const hceStarted = await startHceReceiver(user!.username);
       console.log('[NFC-Receiver] Native HCE started:', hceStarted);
 
-      // 2. Subscribe to incoming HCE payment from sender
       // 2. Clear any existing listeners or polling
       if (hceSubRef.current) {
         hceSubRef.current.unsubscribe();
@@ -310,35 +295,15 @@ export default function NFCTransfer() {
         pollingIntervalRef.current = null;
       }
 
-      hceSubRef.current = subscribeHcePayment(async (senderPayload) => {
-        if (senderPayload && senderPayload.type === 'DPT_P2P_TRANSFER') {
-          try {
-            await saveLocalTransaction({ ...senderPayload, receiver: user!.username });
       // 3. Push listener: Listen for native HCE event
       hceSubRef.current = subscribeHcePayment(processIncomingPayment);
 
-            const newBalance = (user!.balance || 0) + senderPayload.amount;
-            await updateUser({ ...user!, balance: newBalance });
-            await db.saveCachedUser(user!.username, { ...user, balance: newBalance });
-
-            syncService.notifyDataChanged();
-            syncService.forceSync(user!.username);
-
-            setSuccessData(senderPayload);
-            setStep('success');
-
-            Alert.alert(
-              language === 'en' ? 'Received!' : 'পেয়েছেন!',
-              language === 'en'
-                ? `৳${senderPayload.amount} from @${senderPayload.sender}`
-                : `৳${senderPayload.amount} @${senderPayload.sender}-এর কাছ থেকে`
-            );
-          } catch (err: any) {
-            console.error('[NFC-Receiver] Error saving incoming payment:', err);
-          } finally {
-            await stopHceReceiver();
       // 4. Pull fallback: Poll native buffer every 350ms to guarantee zero packet loss
       pollingIntervalRef.current = setInterval(async () => {
+        // Skip polling if payment already processed (mutex)
+        if (paymentProcessedRef.current) {
+          return;
+        }
         try {
           const buffered = await popReceivedPayment();
           if (buffered && buffered.type === 'DPT_P2P_TRANSFER') {
@@ -348,46 +313,7 @@ export default function NFCTransfer() {
         } catch (pollErr) {
           console.warn('[NFC-Receiver] Polling check notice:', pollErr);
         }
-      });
       }, 350);
-
-      // 3. Fallback: Concurrently listen for physical NDEF tags if user touches a physical card
-      readTransferNDEF().then(async (senderPayload) => {
-        if (senderPayload && senderPayload.type === 'DPT_P2P_TRANSFER') {
-          const confirmPayload: NFCTransferPayload = {
-            type: 'DPT_P2P_TRANSFER',
-            version: 1,
-            sender: user!.username,
-            receiver: senderPayload.sender,
-            amount: senderPayload.amount,
-            timestamp: new Date().toISOString(),
-            txid: senderPayload.txid,
-            nonce: generateNonce(),
-          };
-          await writeTransferNDEF(confirmPayload);
-
-          await saveLocalTransaction({ ...senderPayload, receiver: user!.username });
-
-          const newBalance = (user!.balance || 0) + senderPayload.amount;
-          await updateUser({ ...user!, balance: newBalance });
-          await db.saveCachedUser(user!.username, { ...user, balance: newBalance });
-
-          syncService.notifyDataChanged();
-          syncService.forceSync(user!.username);
-
-          setSuccessData(senderPayload);
-          setStep('success');
-
-          Alert.alert(
-            language === 'en' ? 'Received!' : 'পেয়েছেন!',
-            language === 'en'
-              ? `৳${senderPayload.amount} from @${senderPayload.sender}`
-              : `৳${senderPayload.amount} @${senderPayload.sender}-এর কাছ থেকে`
-          );
-        }
-      }).catch((e) => {
-        console.log('[NFC-Receiver] NDEF background reader finished/cancelled:', e?.message);
-      });
 
     } catch (e: any) {
       setErrorMessage(e.message || (language === 'en' ? 'Receive failed' : 'গ্রহণ ব্যর্থ'));
@@ -423,6 +349,7 @@ export default function NFCTransfer() {
       clearInterval(pollingIntervalRef.current);
       pollingIntervalRef.current = null;
     }
+    paymentProcessedRef.current = false;
     setStep('choose');
     setMode(null);
     setAmount('');
@@ -520,7 +447,7 @@ export default function NFCTransfer() {
             </TouchableOpacity>
           </View>
 
-          {/* Architecture note regarding Android Beam vs Offline QR */}
+          {/* Architecture note */}
           <View
             style={[
               styles.infoCard,
@@ -533,8 +460,8 @@ export default function NFCTransfer() {
             <Ionicons name="information-circle-outline" size={20} color={theme.primary} />
             <Text style={[styles.infoCardText, { color: theme.textSecondary }]}>
               {language === 'en'
-                ? 'NFC transfers require physical NFC smart cards/tags. Modern Android has removed direct phone-to-phone Android Beam. For instant mobile-to-mobile transfer, use Offline QR Pay.'
-                : 'NFC ট্রান্সফার ফিজিক্যাল স্মার্টকার্ড বা ট্যাগের জন্য প্রযোজ্য। আধুনিক অ্যান্ড্রয়েডে ডিরেক্ট ফোন-টু-ফোন বিম বন্ধ রয়েছে। সরাসরি ফোন-থেকে-ফোনে ট্রান্সফারের জন্য অফলাইন QR Pay ব্যবহার করুন।'}
+                ? 'Both phones must have NFC enabled. Hold the back of both phones together during transfer.'
+                : 'দুটো ফোনে NFC চালু থাকতে হবে। ট্রান্সফারের সময় দুটো ফোনের ব্যাক একসাথে ধরুন।'}
             </Text>
           </View>
 
@@ -560,7 +487,7 @@ export default function NFCTransfer() {
           amount={amount || '0'}
           onAuthorized={handleAuthSuccess}
           onCancel={handleAuthCancel}
-          pinLength={5}
+          pinLength={8}
           onVerifyPin={handleVerifyPin}
         />
       )}
@@ -632,26 +559,22 @@ export default function NFCTransfer() {
             <Ionicons name="wifi" size={56} color={mode === 'send' ? theme.primary : theme.success} />
           </Animated.View>
 
-          <Text style={[styles.title, { color: theme.text, marginTop: 28 }]}>
           <Text style={[styles.title, { color: theme.text, marginTop: 24 }]}>
             {mode === 'send'
               ? language === 'en' ? `Sending ৳${amount}` : `৳${amount} পাঠাচ্ছে`
-              : language === 'en' ? 'Waiting for Sender...' : 'প্রেরকের জন্য অপেক্ষা...'}
               : language === 'en' ? 'Ready to Receive' : 'টাকা গ্রহণের জন্য প্রস্তুত'}
           </Text>
 
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
             {language === 'en'
-              ? 'Hold phones together'
-              : 'ফোন একসাথে ধরুন'}
               ? 'Hold the back of both phones together until they vibrate'
               : 'দুটো ফোনের ব্যাক একসাথে স্পর্শ করে রাখুন যতক্ষণ না ভাইব্রেট করে'}
           </Text>
 
-          {/* Live Engine Diagnostic Badge */}
+          {/* Status indicator */}
           <View
             style={[
-              styles.diagnosticBadge,
+              styles.statusBadge,
               {
                 backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0F3F6',
                 borderColor: mode === 'send' ? theme.primary : theme.success,
@@ -665,22 +588,17 @@ export default function NFCTransfer() {
             />
             <Text
               style={[
-                styles.diagnosticText,
+                styles.statusText,
                 { color: mode === 'send' ? theme.primary : theme.success },
               ]}
             >
               {mode === 'send'
-                ? language === 'en'
-                  ? 'Reader Mode: Polling ISO-DEP (Type A/B)'
-                  : 'রিডার মোড: ISO-DEP ট্যাপ খুঁজছে'
-                : language === 'en'
-                ? `HCE SmartCard: Active (@${user?.username || 'user'})`
-                : `HCE কার্ড এমুলেশন: সক্রিয় (@${user?.username || 'user'})`}
+                ? language === 'en' ? 'Searching for receiver...' : 'গ্রাহক খুঁজছে...'
+                : language === 'en' ? 'Waiting for sender...' : 'প্রেরকের জন্য অপেক্ষা...'}
             </Text>
           </View>
 
           {isProcessing && (
-            <ActivityIndicator size="large" color={mode === 'send' ? theme.primary : theme.success} style={{ marginTop: 20 }} />
             <ActivityIndicator size="large" color={mode === 'send' ? theme.primary : theme.success} style={{ marginTop: 16 }} />
           )}
 
@@ -783,7 +701,7 @@ export default function NFCTransfer() {
             activeOpacity={0.8}
           >
             <Text style={[styles.mainButtonText, { color: theme.text }]}>
-              {language === 'en' ? 'Try Again with NFC Tag' : 'NFC ট্যাগ দিয়ে পুনরায় চেষ্টা করুন'}
+              {language === 'en' ? 'Try Again' : 'আবার চেষ্টা করুন'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -878,7 +796,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  diagnosticBadge: {
+  statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -888,7 +806,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginTop: 16,
   },
-  diagnosticText: {
+  statusText: {
     fontSize: 12,
     fontWeight: '600',
   },
