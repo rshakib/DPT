@@ -17,7 +17,7 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [activeThemeName, setActiveThemeNameState] = useState<ActiveThemeName>('sol');
+  const [activeThemeName, setActiveThemeNameState] = useState<ActiveThemeName>('classic');
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   useEffect(() => {

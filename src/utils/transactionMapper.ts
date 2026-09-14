@@ -90,6 +90,18 @@ export function mapApiTransaction(
     iconBg = primaryLightColor;
     iconColor = primaryColor;
     displayTitle = `${language === 'en' ? 'QR Payment' : 'QR পেমেন্ট'} to ${displayCounterpart}`;
+  } else if (typeLower === 'nfc_transfer') {
+    iconName = 'wifi-outline';
+    iconBg = isOutgoing ? primaryLightColor : 'rgba(16, 185, 129, 0.12)';
+    iconColor = isOutgoing ? primaryColor : successColor;
+    displayTitle = isOutgoing
+      ? `${language === 'en' ? 'NFC Transfer to' : 'NFC ট্রান্সফার:'} ${displayCounterpart}`
+      : `${language === 'en' ? 'NFC Transfer from' : 'NFC ট্রান্সফার:'} ${displayCounterpart}`;
+  } else if (typeLower === 'security_penalty') {
+    iconName = 'shield-outline';
+    iconBg = 'rgba(255, 56, 56, 0.15)';
+    iconColor = errorColor;
+    displayTitle = language === 'en' ? 'Security Penalty' : 'নিরাপত্তা জরিমানা';
   } else {
     iconName = isOutgoing ? 'arrow-up-outline' : 'arrow-down-outline';
     iconBg = isOutgoing ? primaryLightColor : 'rgba(16, 185, 129, 0.12)';
@@ -124,12 +136,19 @@ export function mapApiTransaction(
 
   const isTxSuccess = tx.status === 'success' || tx.status === 'Successful';
   const isOfflinePending = String(tx.reference || tx.id || '').startsWith('OFF-');
+  const isForfeited = tx.status === 'forfeited_no_refund' || tx.status === 'failed_unrefunded';
   const amountVal = parseFloat(tx.amount || 0);
 
   let displayStatus: string;
   let displayStatusEnglish: 'Successful' | 'Failed';
 
-  if (isOfflinePending && isTxSuccess) {
+  if (isForfeited) {
+    displayStatus = language === 'en' ? 'Non-Refundable' : 'অফেরতযোগ্য';
+    displayStatusEnglish = 'Failed';
+    iconName = 'alert-circle-outline';
+    iconBg = 'rgba(255, 56, 56, 0.15)';
+    iconColor = errorColor;
+  } else if (isOfflinePending && isTxSuccess) {
     displayStatus = language === 'en' ? 'Offline' : 'অফলাইন';
     displayStatusEnglish = 'Successful'; // placeholder, not used for offline
   } else if (isTxSuccess) {

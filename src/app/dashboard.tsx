@@ -330,7 +330,7 @@ export default function Dashboard() {
           </View>
           <View style={styles.gridRow}>
             <GridItem title={t.cashOut || 'Cash Out'} iconName="cash-outline" route="/cashout" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
-            <GridItem title={t.qrPay || 'QR Pay'} iconName="qr-code-outline" route="/qr-pay" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
+            <GridItem title={t.myQr || 'My QR'} iconName="qr-code-outline" route="/my-qr" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
             <GridItem title={t.transactionHistory || 'Transaction History'} iconName="time-outline" route="/history" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
             <GridItem title="NFC Transfer" iconName="wifi-outline" route="/nfc-transfer" onNavigate={handleNavigate} theme={theme} isDarkMode={isDarkMode} />
           </View>
@@ -468,7 +468,7 @@ export default function Dashboard() {
           >
             <Ionicons name="qr-code-outline" size={28} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={[styles.qrFabText, { color: theme.primary }]}>{t.qr || 'QR'}</Text>
+          <Text style={[styles.qrFabText, { color: theme.primary }]}>QR PAY</Text>
         </View>
 
         {/* Tab 4: Notifications */}

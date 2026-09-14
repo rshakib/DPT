@@ -4,10 +4,12 @@ import {
   View,
   Text,
   TouchableOpacity,
+  TextInput,
   Animated,
   Dimensions,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +19,7 @@ import { Header } from '../components/Header';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import { TransactionAuthScreen } from '../components/TransactionAuthScreen';
 import {
   isNFCAvailable,
   stopNFC,
@@ -25,13 +28,20 @@ import {
   generateNFCTransferId,
   generateNonce,
   NFCTransferPayload,
+  startHceReceiver,
+  stopHceReceiver,
+  subscribeHcePayment,
+  sendIsoDepPayment,
+  popReceivedPayment,
+  isDptHceModuleAvailable,
 } from '../services/nfc';
 import * as db from '../services/db';
 import { syncService } from '../services/sync';
+import { verifyPinLocally } from '../utils/security';
 
 const { width } = Dimensions.get('window');
 
-type NFCStep = 'choose' | 'waiting-tap' | 'success' | 'error';
+type NFCStep = 'choose' | 'auth' | 'enter-amount' | 'waiting-tap' | 'success' | 'error';
 
 export default function NFCTransfer() {
   const router = useRouter();
@@ -41,16 +51,30 @@ export default function NFCTransfer() {
 
   const [step, setStep] = useState<NFCStep>('choose');
   const [mode, setMode] = useState<'send' | 'receive' | null>(null);
+  const [amount, setAmount] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [successData, setSuccessData] = useState<NFCTransferPayload | null>(null);
   const [nfcAvailable, setNfcAvailable] = useState<boolean | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const hceSubRef = useRef<{ unsubscribe: () => void } | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     checkNFC();
-    return () => { stopNFC(); };
+    return () => {
+      stopNFC();
+      stopHceReceiver();
+      if (hceSubRef.current) {
+        hceSubRef.current.unsubscribe();
+        hceSubRef.current = null;
+      }
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -71,9 +95,10 @@ export default function NFCTransfer() {
     setNfcAvailable(available);
   };
 
-  // SEND: navigate to normal send-money screen
+  // SEND: go to PIN + Biometric auth first
   const handleSendPress = () => {
-    router.push('/send-money');
+    setMode('send');
+    setStep('auth');
   };
 
   // RECEIVE: wait for sender to tap
@@ -83,41 +108,163 @@ export default function NFCTransfer() {
     startReceiver();
   };
 
-  const startReceiver = async () => {
+  // Local hardware-isolated PIN verification (Salted SHA-256 + 3-strike brute-force lockout)
+  const handleVerifyPin = async (pinInput: string) => {
+    if (!user?.username) {
+      return {
+        success: false,
+        message: language === 'en' ? 'User session not found.' : 'ব্যবহারকারীর সেশন পাওয়া যায়নি।',
+      };
+    }
+    return await verifyPinLocally(user.username, pinInput);
+  };
+
+  // After PIN + Biometric auth success
+  const handleAuthSuccess = () => {
+    setStep('enter-amount');
+  };
+
+  // Auth cancelled
+  const handleAuthCancel = () => {
+    setStep('choose');
+    setMode(null);
+  };
+
+  // After entering amount, start NFC send
+  const handleAmountSubmit = () => {
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      setErrorMessage(language === 'en' ? 'Enter a valid amount' : 'সঠিক পরিমাণ লিখুন');
+      return;
+    }
+    if (amountNum > (user?.balance || 0)) {
+      setErrorMessage(language === 'en' ? 'Insufficient balance' : 'অপর্যাপ্ত ব্যালেন্স');
+      return;
+    }
+    const dailyLimit = Number(user?.daily_limit || user?.dailyLimit || 50000);
+    const todaySpent = Number(user?.today_spent || user?.todaySpent || 0);
+    if (todaySpent + amountNum > dailyLimit) {
+      const remainingLimit = Math.max(0, dailyLimit - todaySpent);
+      setErrorMessage(
+        language === 'en'
+          ? `Daily limit exceeded. Remaining limit: ৳${remainingLimit.toLocaleString()}`
+          : `দৈনিক সীমা অতিক্রম করেছে। অবশিষ্ট সীমা: ৳${remainingLimit.toLocaleString()}`
+      );
+      return;
+    }
+    setStep('waiting-tap');
+    startSender(amountNum);
+  };
+
+  // NFC SEND (Phone-to-Phone IsoDep + Physical NDEF Fallback)
+  const startSender = async (amountNum: number) => {
     setIsProcessing(true);
     setErrorMessage('');
 
     try {
-      const senderPayload = await readTransferNDEF();
+      const payload: NFCTransferPayload = {
+        type: 'DPT_P2P_TRANSFER',
+        version: 1,
+        sender: user!.username,
+        receiver: '',
+        amount: amountNum,
+        timestamp: new Date().toISOString(),
+        txid: generateNFCTransferId(),
+        nonce: generateNonce(),
+      };
 
-      if (senderPayload && senderPayload.type === 'DPT_P2P_TRANSFER') {
-        // Write confirmation back to sender
-        const confirmPayload: NFCTransferPayload = {
-          type: 'DPT_P2P_TRANSFER',
-          version: 1,
-          sender: user!.username,
-          receiver: senderPayload.sender,
-          amount: senderPayload.amount,
-          timestamp: new Date().toISOString(),
-          txid: senderPayload.txid,
-          nonce: generateNonce(),
-        };
-        await writeTransferNDEF(confirmPayload);
+      // 1. Try Mobile-to-Mobile IsoDep HCE transfer first
+      let transferSuccess = false;
+      let targetReceiver = '';
 
-        // Save received transaction locally
-        const tx = {
-          id: senderPayload.txid,
-          sender_username: senderPayload.sender,
-          receiver_username: user!.username,
-          amount: senderPayload.amount,
-          type: 'nfc_transfer',
-          status: 'success',
-          reference: senderPayload.txid,
-          created_at: senderPayload.timestamp,
-        };
-        await db.mergeCachedTransactions(user!.username, [tx]);
+      try {
+        console.log('[NFC-Sender] Attempting IsoDep connection to receiver phone...');
+        const isoDepResult = await sendIsoDepPayment(payload);
+        if (isoDepResult.success) {
+          transferSuccess = true;
+          targetReceiver = isoDepResult.receiver;
+        }
+      } catch (isoDepErr: any) {
+        if (isoDepErr?.code === 'CANCELLED' || isoDepErr?.message?.includes('cancelled')) {
+          setStep('choose');
+          setMode(null);
+          return;
+        }
 
-        // Update balance
+        console.log('[NFC-Sender] IsoDep failed:', isoDepErr?.message);
+        // If not Android native HCE or user wants physical card fallback:
+        if (Platform.OS !== 'android') {
+          try {
+            const ndefSuccess = await writeTransferNDEF(payload);
+            if (ndefSuccess) {
+              const receiverPayload = await readTransferNDEF();
+              if (receiverPayload && receiverPayload.type === 'DPT_P2P_TRANSFER') {
+                transferSuccess = true;
+                targetReceiver = receiverPayload.sender;
+              }
+            }
+          } catch (_) {
+            throw isoDepErr;
+          }
+        } else {
+          throw isoDepErr;
+        }
+      }
+
+      if (transferSuccess) {
+        const finalPayload = { ...payload, receiver: targetReceiver || 'receiver' };
+
+        await saveLocalTransaction(finalPayload);
+
+        // Persist in pending offline queue for automatic server delta reconciliation
+        await db.savePendingOfflineTransaction(
+          user!.username,
+          finalPayload.receiver,
+          amountNum,
+          'nfc_transfer',
+          payload.txid
+        );
+
+        const newBalance = (user!.balance || 0) - amountNum;
+        const newSpent = (user!.today_spent || 0) + amountNum;
+        await updateUser({ ...user!, balance: newBalance, today_spent: newSpent });
+        await db.saveCachedUser(user!.username, { ...user, balance: newBalance, today_spent: newSpent });
+
+        syncService.notifyDataChanged();
+        syncService.forceSync(user!.username);
+
+        setSuccessData(finalPayload);
+        setStep('success');
+
+        Alert.alert(
+          language === 'en' ? 'Sent!' : 'পাঠানো হয়েছে!',
+          language === 'en'
+            ? `৳${amountNum} sent to @${finalPayload.receiver}`
+            : `৳${amountNum} @${finalPayload.receiver}-এ পাঠানো হয়েছে`
+        );
+      } else {
+        throw new Error(language === 'en' ? 'NFC transfer could not be completed.' : 'NFC ট্রান্সফার সম্পন্ন করা সম্ভব হয়নি।');
+      }
+    } catch (e: any) {
+      setErrorMessage(e.message || (language === 'en' ? 'Transfer failed' : 'ট্রান্সফার ব্যর্থ'));
+      setStep('error');
+    } finally {
+      setIsProcessing(false);
+      await stopNFC();
+    }
+  };
+
+  // NFC RECEIVE (Host Card Emulation for Phone-to-Phone + Physical Tag Fallback)
+  const processIncomingPayment = async (senderPayload: NFCTransferPayload) => {
+    if (senderPayload && senderPayload.type === 'DPT_P2P_TRANSFER') {
+      try {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+
+        await saveLocalTransaction({ ...senderPayload, receiver: user!.username });
+
         const newBalance = (user!.balance || 0) + senderPayload.amount;
         await updateUser({ ...user!, balance: newBalance });
         await db.saveCachedUser(user!.username, { ...user, balance: newBalance });
@@ -129,32 +276,171 @@ export default function NFCTransfer() {
         setStep('success');
 
         Alert.alert(
-          language === 'en' ? 'Money Received!' : 'টাকা পেয়েছেন!',
+          language === 'en' ? 'Received!' : 'পেয়েছেন!',
           language === 'en'
-            ? `৳${senderPayload.amount} received from @${senderPayload.sender}`
-            : `৳${senderPayload.amount} @${senderPayload.sender}-এর কাছ থেকে পেয়েছেন`
+            ? `৳${senderPayload.amount} from @${senderPayload.sender}`
+            : `৳${senderPayload.amount} @${senderPayload.sender}-এর কাছ থেকে`
         );
-      } else {
-        throw new Error('No valid transfer data received');
+      } catch (err: any) {
+        console.error('[NFC-Receiver] Error saving incoming payment:', err);
+      } finally {
+        await stopHceReceiver();
       }
-    } catch (e: any) {
-      setErrorMessage(e.message || (language === 'en' ? 'Receive failed' : 'গ্রহণ ব্যর্থ'));
-      setStep('error');
-    } finally {
-      setIsProcessing(false);
-      await stopNFC();
     }
   };
 
+  // NFC RECEIVE (Host Card Emulation for Phone-to-Phone)
+  const startReceiver = async () => {
+    setIsProcessing(true);
+    setErrorMessage('');
+
+    try {
+      // 1. Activate Native Android HCE (Card Emulation)
+      const hceStarted = await startHceReceiver(user!.username);
+      console.log('[NFC-Receiver] Native HCE started:', hceStarted);
+
+      // 2. Subscribe to incoming HCE payment from sender
+      // 2. Clear any existing listeners or polling
+      if (hceSubRef.current) {
+        hceSubRef.current.unsubscribe();
+        hceSubRef.current = null;
+      }
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+
+      hceSubRef.current = subscribeHcePayment(async (senderPayload) => {
+        if (senderPayload && senderPayload.type === 'DPT_P2P_TRANSFER') {
+          try {
+            await saveLocalTransaction({ ...senderPayload, receiver: user!.username });
+      // 3. Push listener: Listen for native HCE event
+      hceSubRef.current = subscribeHcePayment(processIncomingPayment);
+
+            const newBalance = (user!.balance || 0) + senderPayload.amount;
+            await updateUser({ ...user!, balance: newBalance });
+            await db.saveCachedUser(user!.username, { ...user, balance: newBalance });
+
+            syncService.notifyDataChanged();
+            syncService.forceSync(user!.username);
+
+            setSuccessData(senderPayload);
+            setStep('success');
+
+            Alert.alert(
+              language === 'en' ? 'Received!' : 'পেয়েছেন!',
+              language === 'en'
+                ? `৳${senderPayload.amount} from @${senderPayload.sender}`
+                : `৳${senderPayload.amount} @${senderPayload.sender}-এর কাছ থেকে`
+            );
+          } catch (err: any) {
+            console.error('[NFC-Receiver] Error saving incoming payment:', err);
+          } finally {
+            await stopHceReceiver();
+      // 4. Pull fallback: Poll native buffer every 350ms to guarantee zero packet loss
+      pollingIntervalRef.current = setInterval(async () => {
+        try {
+          const buffered = await popReceivedPayment();
+          if (buffered && buffered.type === 'DPT_P2P_TRANSFER') {
+            console.log('[NFC-Receiver] Found payment via active polling buffer:', buffered);
+            await processIncomingPayment(buffered);
+          }
+        } catch (pollErr) {
+          console.warn('[NFC-Receiver] Polling check notice:', pollErr);
+        }
+      });
+      }, 350);
+
+      // 3. Fallback: Concurrently listen for physical NDEF tags if user touches a physical card
+      readTransferNDEF().then(async (senderPayload) => {
+        if (senderPayload && senderPayload.type === 'DPT_P2P_TRANSFER') {
+          const confirmPayload: NFCTransferPayload = {
+            type: 'DPT_P2P_TRANSFER',
+            version: 1,
+            sender: user!.username,
+            receiver: senderPayload.sender,
+            amount: senderPayload.amount,
+            timestamp: new Date().toISOString(),
+            txid: senderPayload.txid,
+            nonce: generateNonce(),
+          };
+          await writeTransferNDEF(confirmPayload);
+
+          await saveLocalTransaction({ ...senderPayload, receiver: user!.username });
+
+          const newBalance = (user!.balance || 0) + senderPayload.amount;
+          await updateUser({ ...user!, balance: newBalance });
+          await db.saveCachedUser(user!.username, { ...user, balance: newBalance });
+
+          syncService.notifyDataChanged();
+          syncService.forceSync(user!.username);
+
+          setSuccessData(senderPayload);
+          setStep('success');
+
+          Alert.alert(
+            language === 'en' ? 'Received!' : 'পেয়েছেন!',
+            language === 'en'
+              ? `৳${senderPayload.amount} from @${senderPayload.sender}`
+              : `৳${senderPayload.amount} @${senderPayload.sender}-এর কাছ থেকে`
+          );
+        }
+      }).catch((e) => {
+        console.log('[NFC-Receiver] NDEF background reader finished/cancelled:', e?.message);
+      });
+
+    } catch (e: any) {
+      setErrorMessage(e.message || (language === 'en' ? 'Receive failed' : 'গ্রহণ ব্যর্থ'));
+      setStep('error');
+      setIsProcessing(false);
+      await stopNFC();
+      await stopHceReceiver();
+    }
+  };
+
+  const saveLocalTransaction = async (payload: NFCTransferPayload) => {
+    const tx = {
+      id: payload.txid,
+      sender_username: payload.sender,
+      receiver_username: payload.receiver,
+      amount: payload.amount,
+      type: 'nfc_transfer',
+      status: 'success',
+      reference: payload.txid,
+      created_at: payload.timestamp,
+    };
+    await db.mergeCachedTransactions(user!.username, [tx]);
+  };
+
   const handleRetry = () => {
+    stopNFC();
+    stopHceReceiver();
+    if (hceSubRef.current) {
+      hceSubRef.current.unsubscribe();
+      hceSubRef.current = null;
+    }
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
     setStep('choose');
     setMode(null);
+    setAmount('');
     setErrorMessage('');
     setSuccessData(null);
   };
 
   const handleDone = () => {
     stopNFC();
+    stopHceReceiver();
+    if (hceSubRef.current) {
+      hceSubRef.current.unsubscribe();
+      hceSubRef.current = null;
+    }
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
     router.push('/dashboard');
   };
 
@@ -170,8 +456,8 @@ export default function NFCTransfer() {
           </Text>
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
             {language === 'en'
-              ? 'This device does not support NFC or NFC is disabled in settings.'
-              : 'এই ডিভাইসে NFC সাপোর্ট করে না বা সেটিংসে NFC বন্ধ আছে।'}
+              ? 'This device does not support NFC or NFC is disabled.'
+              : 'এই ডিভাইসে NFC সাপোর্ট করে না বা NFC বন্ধ আছে।'}
           </Text>
           <TouchableOpacity
             style={[styles.mainButton, { backgroundColor: theme.primary, marginTop: 30 }]}
@@ -188,10 +474,10 @@ export default function NFCTransfer() {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
       <Header title="NFC Transfer" />
 
-      {/* STEP 1: Choose Send or Receive */}
+      {/* STEP: Choose Send or Receive */}
       {step === 'choose' && (
         <View style={styles.chooseContainer}>
-          <View style={styles.nfcIconContainer}>
+          <View style={[styles.nfcIconBig, { backgroundColor: theme.primaryLight }]}>
             <Ionicons name="wifi" size={48} color={theme.primary} />
           </View>
 
@@ -200,79 +486,224 @@ export default function NFCTransfer() {
           </Text>
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
             {language === 'en'
-              ? 'Send or receive money by tapping phones together'
-              : 'ফোন একসাথে ট্যাপ করে টাকা পাঠান বা গ্রহণ করুন'}
+              ? 'Send or receive money by tapping phones'
+              : 'ফোন ট্যাপ করে টাকা পাঠান বা গ্রহণ করুন'}
           </Text>
 
-          <View style={styles.optionsContainer}>
-            {/* Send Option */}
+          <View style={styles.optionsRow}>
             <TouchableOpacity
-              style={[styles.optionCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
+              style={[styles.optionCard, { backgroundColor: theme.primary }]}
               onPress={handleSendPress}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
-              <View style={[styles.optionIcon, { backgroundColor: theme.primary }]}>
-                <Ionicons name="arrow-up" size={28} color="#FFFFFF" />
-              </View>
-              <Text style={[styles.optionTitle, { color: theme.text }]}>
-                {language === 'en' ? 'Send Money' : 'টাকা পাঠান'}
+              <Ionicons name="arrow-up-circle" size={40} color="#FFFFFF" />
+              <Text style={styles.optionTitle}>
+                {language === 'en' ? 'Send' : 'পাঠান'}
               </Text>
-              <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
-                {language === 'en'
-                  ? 'Open send money form'
-                  : 'টাকা পাঠানোর ফর্ম খুলুন'}
+              <Text style={styles.optionDesc}>
+                {language === 'en' ? 'Tap to send money' : 'টাকা পাঠাতে ট্যাপ করুন'}
               </Text>
             </TouchableOpacity>
 
-            {/* Receive Option */}
             <TouchableOpacity
-              style={[styles.optionCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
+              style={[styles.optionCard, { backgroundColor: theme.success }]}
               onPress={handleReceivePress}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
-              <View style={[styles.optionIcon, { backgroundColor: theme.success }]}>
-                <Ionicons name="arrow-down" size={28} color="#FFFFFF" />
-              </View>
-              <Text style={[styles.optionTitle, { color: theme.text }]}>
-                {language === 'en' ? 'Receive Money' : 'টাকা গ্রহণ করুন'}
+              <Ionicons name="arrow-down-circle" size={40} color="#FFFFFF" />
+              <Text style={styles.optionTitle}>
+                {language === 'en' ? 'Receive' : 'গ্রহণ করুন'}
               </Text>
-              <Text style={[styles.optionDesc, { color: theme.textSecondary }]}>
-                {language === 'en'
-                  ? 'Wait for sender to tap'
-                  : 'প্রেরকের ট্যাপের জন্য অপেক্ষা করুন'}
+              <Text style={styles.optionDesc}>
+                {language === 'en' ? 'Wait for sender tap' : 'প্রেরকের ট্যাপের জন্য অপেক্ষা করুন'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Architecture note regarding Android Beam vs Offline QR */}
+          <View
+            style={[
+              styles.infoCard,
+              {
+                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.04)' : '#F5F4FA',
+                borderColor: theme.border,
+              },
+            ]}
+          >
+            <Ionicons name="information-circle-outline" size={20} color={theme.primary} />
+            <Text style={[styles.infoCardText, { color: theme.textSecondary }]}>
+              {language === 'en'
+                ? 'NFC transfers require physical NFC smart cards/tags. Modern Android has removed direct phone-to-phone Android Beam. For instant mobile-to-mobile transfer, use Offline QR Pay.'
+                : 'NFC ট্রান্সফার ফিজিক্যাল স্মার্টকার্ড বা ট্যাগের জন্য প্রযোজ্য। আধুনিক অ্যান্ড্রয়েডে ডিরেক্ট ফোন-টু-ফোন বিম বন্ধ রয়েছে। সরাসরি ফোন-থেকে-ফোনে ট্রান্সফারের জন্য অফলাইন QR Pay ব্যবহার করুন।'}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.qrAlternativeButton, { borderColor: theme.primary }]}
+            onPress={() => router.push('/qr-pay')}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="qr-code-outline" size={18} color={theme.primary} />
+            <Text style={[styles.qrAlternativeText, { color: theme.primary }]}>
+              {language === 'en' ? 'Switch to Offline QR Pay' : 'অফলাইন QR Pay ব্যবহার করুন'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* STEP: PIN + Biometric Auth (Send only) */}
+      {step === 'auth' && (
+        <TransactionAuthScreen
+          summaryLabel={language === 'en' ? 'NFC Transfer' : 'NFC ট্রান্সফার'}
+          summaryTitle={language === 'en' ? 'Authorize Transfer' : 'ট্রান্সফার অনুমোদন'}
+          summarySubtitle={language === 'en' ? 'Verify your identity to send money' : 'টাকা পাঠাতে আপনার পরিচয় যাচাই করুন'}
+          amount={amount || '0'}
+          onAuthorized={handleAuthSuccess}
+          onCancel={handleAuthCancel}
+          pinLength={5}
+          onVerifyPin={handleVerifyPin}
+        />
+      )}
+
+      {/* STEP: Enter Amount (Send only, after auth) */}
+      {step === 'enter-amount' && (
+        <View style={styles.amountContainer}>
+          <Text style={[styles.title, { color: theme.text }]}>
+            {language === 'en' ? 'Enter Amount' : 'পরিমাণ লিখুন'}
+          </Text>
+
+          <View style={styles.amountRow}>
+            <Text style={[styles.currencySign, { color: theme.primary }]}>৳</Text>
+            <TextInput
+              style={[styles.amountInput, { color: theme.text }]}
+              value={amount}
+              onChangeText={(text) => {
+                setAmount(text.replace(/[^0-9.]/g, ''));
+                setErrorMessage('');
+              }}
+              keyboardType="numeric"
+              placeholder="0"
+              placeholderTextColor={isDarkMode ? '#555' : '#CCC'}
+              autoFocus
+            />
+          </View>
+
+          <Text style={[styles.balanceText, { color: theme.textSecondary }]}>
+            {language === 'en' ? 'Balance' : 'ব্যালেন্স'}: ৳{user?.balance?.toLocaleString() || '0'}
+          </Text>
+
+          {errorMessage ? (
+            <Text style={[styles.errorText, { color: theme.error }]}>{errorMessage}</Text>
+          ) : null}
+
+          <View style={styles.amountButtons}>
+            <TouchableOpacity
+              style={[styles.mainButton, { backgroundColor: theme.border }]}
+              onPress={() => { setStep('choose'); setMode(null); setAmount(''); }}
+            >
+              <Text style={[styles.mainButtonText, { color: theme.text }]}>
+                {language === 'en' ? 'Cancel' : 'বাতিল'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.mainButton, { backgroundColor: theme.primary }]}
+              onPress={handleAmountSubmit}
+            >
+              <Text style={styles.mainButtonText}>
+                {language === 'en' ? 'Next' : 'পরবর্তী'}
               </Text>
             </TouchableOpacity>
           </View>
         </View>
       )}
 
-      {/* STEP 2: Waiting for Tap (Receive mode) */}
+      {/* STEP: Waiting for NFC Tap */}
       {step === 'waiting-tap' && (
         <View style={styles.waitingContainer}>
           <Animated.View
             style={[
               styles.nfcCircle,
-              { borderColor: theme.success, transform: [{ scale: pulseAnim }] },
+              {
+                borderColor: mode === 'send' ? theme.primary : theme.success,
+                transform: [{ scale: pulseAnim }],
+              },
             ]}
           >
-            <Ionicons name="wifi" size={56} color={theme.success} />
+            <Ionicons name="wifi" size={56} color={mode === 'send' ? theme.primary : theme.success} />
           </Animated.View>
 
           <Text style={[styles.title, { color: theme.text, marginTop: 28 }]}>
-            {language === 'en' ? 'Waiting for Sender...' : 'প্রেরকের জন্য অপেক্ষা করছে...'}
-          </Text>
-          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-            {language === 'en'
-              ? 'Hold your phone near the sender\'s phone'
-              : 'প্রেরকের ফোনের কাছে আপনার ফোন ধরুন'}
+          <Text style={[styles.title, { color: theme.text, marginTop: 24 }]}>
+            {mode === 'send'
+              ? language === 'en' ? `Sending ৳${amount}` : `৳${amount} পাঠাচ্ছে`
+              : language === 'en' ? 'Waiting for Sender...' : 'প্রেরকের জন্য অপেক্ষা...'}
+              : language === 'en' ? 'Ready to Receive' : 'টাকা গ্রহণের জন্য প্রস্তুত'}
           </Text>
 
+          <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
+            {language === 'en'
+              ? 'Hold phones together'
+              : 'ফোন একসাথে ধরুন'}
+              ? 'Hold the back of both phones together until they vibrate'
+              : 'দুটো ফোনের ব্যাক একসাথে স্পর্শ করে রাখুন যতক্ষণ না ভাইব্রেট করে'}
+          </Text>
+
+          {/* Live Engine Diagnostic Badge */}
+          <View
+            style={[
+              styles.diagnosticBadge,
+              {
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0F3F6',
+                borderColor: mode === 'send' ? theme.primary : theme.success,
+              },
+            ]}
+          >
+            <Ionicons
+              name={mode === 'send' ? 'radio-outline' : 'card-outline'}
+              size={16}
+              color={mode === 'send' ? theme.primary : theme.success}
+            />
+            <Text
+              style={[
+                styles.diagnosticText,
+                { color: mode === 'send' ? theme.primary : theme.success },
+              ]}
+            >
+              {mode === 'send'
+                ? language === 'en'
+                  ? 'Reader Mode: Polling ISO-DEP (Type A/B)'
+                  : 'রিডার মোড: ISO-DEP ট্যাপ খুঁজছে'
+                : language === 'en'
+                ? `HCE SmartCard: Active (@${user?.username || 'user'})`
+                : `HCE কার্ড এমুলেশন: সক্রিয় (@${user?.username || 'user'})`}
+            </Text>
+          </View>
+
           {isProcessing && (
-            <ActivityIndicator size="large" color={theme.success} style={{ marginTop: 20 }} />
+            <ActivityIndicator size="large" color={mode === 'send' ? theme.primary : theme.success} style={{ marginTop: 20 }} />
+            <ActivityIndicator size="large" color={mode === 'send' ? theme.primary : theme.success} style={{ marginTop: 16 }} />
           )}
 
           <TouchableOpacity
-            style={[styles.mainButton, { backgroundColor: theme.border, marginTop: 30 }]}
+            style={[styles.qrAlternativeButton, { borderColor: theme.primary, marginTop: 24 }]}
+            onPress={() => {
+              stopNFC();
+              if (mode === 'send') {
+                router.push('/qr-pay');
+              } else {
+                router.push('/my-qr');
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="qr-code-outline" size={18} color={theme.primary} />
+            <Text style={[styles.qrAlternativeText, { color: theme.primary }]}>
+              {language === 'en' ? 'Switch to Offline QR Pay' : 'অফলাইন QR Pay-তে যান'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.mainButton, { backgroundColor: theme.border, marginTop: 12 }]}
             onPress={() => { stopNFC(); handleRetry(); }}
           >
             <Text style={[styles.mainButtonText, { color: theme.text }]}>
@@ -282,33 +713,31 @@ export default function NFCTransfer() {
         </View>
       )}
 
-      {/* STEP 3: Success (Receive mode) */}
+      {/* STEP: Success */}
       {step === 'success' && successData && (
         <View style={styles.successContainer}>
-          <View style={[styles.successBadge, { backgroundColor: theme.success }]}>
+          <View style={[styles.successBadge, { backgroundColor: mode === 'send' ? theme.primary : theme.success }]}>
             <Ionicons name="checkmark" size={48} color="#FFFFFF" />
           </View>
 
           <Text style={[styles.title, { color: theme.text, marginTop: 20 }]}>
-            {language === 'en' ? 'Money Received!' : 'টাকা পেয়েছেন!'}
+            {mode === 'send'
+              ? language === 'en' ? 'Sent!' : 'পাঠানো হয়েছে!'
+              : language === 'en' ? 'Received!' : 'পেয়েছেন!'}
           </Text>
 
-          <Text style={[styles.amountText, { color: theme.success }]}>
-            + ৳{successData.amount}
+          <Text style={[styles.amountBig, { color: mode === 'send' ? theme.primary : theme.success }]}>
+            {mode === 'send' ? '-' : '+'} ৳{successData.amount}
           </Text>
 
           <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-            {language === 'en'
-              ? `From @${successData.sender}`
-              : `@${successData.sender}-এর কাছ থেকে`}
-          </Text>
-
-          <Text style={[styles.refText, { color: theme.textSecondary }]}>
-            Ref: {successData.txid}
+            {mode === 'send'
+              ? language === 'en' ? `To @${successData.receiver}` : `@${successData.receiver}-এ`
+              : language === 'en' ? `From @${successData.sender}` : `@${successData.sender}-এর কাছ থেকে`}
           </Text>
 
           <TouchableOpacity
-            style={[styles.mainButton, { backgroundColor: theme.success, marginTop: 30 }]}
+            style={[styles.mainButton, { backgroundColor: theme.primary, marginTop: 30 }]}
             onPress={handleDone}
           >
             <Text style={styles.mainButtonText}>
@@ -318,25 +747,43 @@ export default function NFCTransfer() {
         </View>
       )}
 
-      {/* ERROR */}
+      {/* STEP: Error */}
       {step === 'error' && (
         <View style={styles.errorContainer}>
           <Ionicons name="close-circle" size={72} color={theme.error} />
-
           <Text style={[styles.title, { color: theme.text, marginTop: 20 }]}>
             {language === 'en' ? 'Transfer Failed' : 'ট্রান্সফার ব্যর্থ'}
           </Text>
-
-          <Text style={[styles.subtitle, { color: theme.error }]}>
-            {errorMessage}
-          </Text>
+          <Text style={[styles.subtitle, { color: theme.error, marginTop: 8 }]}>{errorMessage}</Text>
 
           <TouchableOpacity
-            style={[styles.mainButton, { backgroundColor: theme.primary, marginTop: 30 }]}
-            onPress={handleRetry}
+            style={[
+              styles.mainButton,
+              { backgroundColor: theme.primary, marginTop: 24, flexDirection: 'row', justifyContent: 'center' },
+            ]}
+            onPress={() => {
+              stopNFC();
+              if (mode === 'send') {
+                router.push('/qr-pay');
+              } else {
+                router.push('/my-qr');
+              }
+            }}
+            activeOpacity={0.8}
           >
+            <Ionicons name="qr-code-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
             <Text style={styles.mainButtonText}>
-              {language === 'en' ? 'Try Again' : 'আবার চেষ্টা করুন'}
+              {language === 'en' ? 'Use Offline QR Pay' : 'অফলাইন QR Pay ব্যবহার করুন'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.mainButton, { backgroundColor: theme.border, marginTop: 12 }]}
+            onPress={handleRetry}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.mainButtonText, { color: theme.text }]}>
+              {language === 'en' ? 'Try Again with NFC Tag' : 'NFC ট্যাগ দিয়ে পুনরায় চেষ্টা করুন'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -349,32 +796,37 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   centerContent: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
   chooseContainer: { flex: 1, alignItems: 'center', paddingTop: 40, paddingHorizontal: Spacing.xxl },
+  amountContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
   waitingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
   successContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xxl },
 
-  nfcIconContainer: {
+  nfcIconBig: {
     width: 80, height: 80, borderRadius: 40,
-    backgroundColor: 'rgba(255, 107, 0, 0.1)',
-    justifyContent: 'center', alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 20,
   },
   title: { fontSize: 22, fontWeight: '700', textAlign: 'center' },
   subtitle: { fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 20 },
 
-  optionsContainer: {
+  optionsRow: {
     flexDirection: 'row', gap: 16, marginTop: 32, width: '100%',
   },
   optionCard: {
-    flex: 1, borderRadius: 20, padding: 20, alignItems: 'center',
-    borderWidth: 1,
+    flex: 1, borderRadius: 20, padding: 24, alignItems: 'center',
   },
-  optionIcon: {
-    width: 56, height: 56, borderRadius: 28,
-    justifyContent: 'center', alignItems: 'center', marginBottom: 12,
+  optionTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', marginTop: 12 },
+  optionDesc: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 4, textAlign: 'center' },
+
+  amountRow: {
+    flexDirection: 'row', alignItems: 'center', marginTop: 32,
   },
-  optionTitle: { fontSize: 16, fontWeight: '700', textAlign: 'center' },
-  optionDesc: { fontSize: 12, textAlign: 'center', marginTop: 4 },
+  currencySign: { fontSize: 44, fontWeight: '700', marginRight: 8 },
+  amountInput: { fontSize: 48, fontWeight: '700', minWidth: 120, textAlign: 'center' },
+  balanceText: { fontSize: 14, marginTop: 12 },
+
+  amountButtons: {
+    flexDirection: 'row', gap: 16, marginTop: 32, width: '100%',
+  },
 
   nfcCircle: {
     width: 140, height: 140, borderRadius: 70,
@@ -385,12 +837,59 @@ const styles = StyleSheet.create({
     width: 100, height: 100, borderRadius: 50,
     justifyContent: 'center', alignItems: 'center',
   },
-  amountText: { fontSize: 36, fontWeight: '700', marginTop: 12 },
-  refText: { fontSize: 11, marginTop: 12 },
+  amountBig: { fontSize: 36, fontWeight: '700', marginTop: 12 },
 
   mainButton: {
     paddingHorizontal: 32, paddingVertical: 16,
     borderRadius: 14, minWidth: 140, alignItems: 'center',
   },
   mainButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+
+  errorText: { fontSize: 14, fontWeight: '600', marginTop: 8, textAlign: 'center' },
+
+  infoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 24,
+    width: '100%',
+    gap: 10,
+  },
+  infoCardText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  qrAlternativeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    marginTop: 14,
+    width: '100%',
+    gap: 8,
+  },
+  qrAlternativeText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  diagnosticBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginTop: 16,
+  },
+  diagnosticText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
 });

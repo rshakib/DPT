@@ -71,6 +71,12 @@
             "newArchEnabled": false
           }
         }
+      ],
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "Allow DPT to use NFC for contactless money transfers."
+        }
       ]
     ],
     "experiments": {

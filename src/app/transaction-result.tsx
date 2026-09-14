@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Clipboard from 'expo-clipboard';
+import QRCode from 'react-native-qrcode-svg';
 import { Spacing } from '../constants/theme';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -41,12 +42,18 @@ export default function TransactionResult() {
   const billerAccountNo = Array.isArray(params.billerAccountNo) ? params.billerAccountNo[0] : params.billerAccountNo || '';
 
   const errorReason = Array.isArray(params.errorReason) ? params.errorReason[0] : params.errorReason || '';
+  const offlineReceipt = Array.isArray(params.offlineReceipt) ? params.offlineReceipt[0] : params.offlineReceipt || '';
   const [copied, setCopied] = useState(false);
 
   const isSuccess = status === 'success';
 
   const getFailureReason = (code: string) => {
     if (errorReason) return errorReason;
+    if (code === 'failed_unrefunded' || code === 'forfeited_no_refund') {
+      return language === 'en'
+        ? 'Transaction failed after 5 retry attempts. Funds debited permanently and bank notified.'
+        : '৫ বার চেষ্টার পরও লেনদেন সম্পন্ন হয়নি। নিয়ম অনুযায়ী টাকা কর্তন করা হয়েছে এবং ব্যাংককে অবহিত করা হয়েছে।';
+    }
     switch (code) {
       case 'insufficient_balance':
         return t.errInsufficientBalance;
@@ -113,10 +120,20 @@ export default function TransactionResult() {
 
         {/* Status Text */}
         <Text style={styles.statusTitle}>
-          {isSuccess ? t.transferSuccessful : t.transferFailed}
+          {isSuccess
+            ? t.transferSuccessful
+            : (status === 'failed_unrefunded' || status === 'forfeited_no_refund'
+                ? (language === 'en' ? 'Transfer Failed (Non-Refundable)' : 'লেনদেন ব্যর্থ (অফেরতযোগ্য)')
+                : t.transferFailed)}
         </Text>
         <Text style={styles.statusSubtitle}>
-          {isSuccess ? t.moneySentSuccess : t.couldNotCompleteTx}
+          {isSuccess
+            ? t.moneySentSuccess
+            : (status === 'failed_unrefunded' || status === 'forfeited_no_refund'
+                ? (language === 'en'
+                    ? '5 retries failed. Funds debited & bank notified.'
+                    : '৫ বার চেষ্টার পরও ব্যর্থ। টাকা কর্তন করা হয়েছে ও ব্যাংককে অবহিত করা হয়েছে।')
+                : t.couldNotCompleteTx)}
         </Text>
 
         {/* Amount */}
@@ -261,6 +278,37 @@ export default function TransactionResult() {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Instant Offline Receiver Settlement Card */}
+        {isSuccess && Boolean(offlineReceipt) && (
+          <View style={[styles.offlineCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
+            <View style={styles.offlineCardHeader}>
+              <Ionicons name="qr-code" size={20} color={theme.primary} />
+              <Text style={[styles.offlineCardTitle, { color: theme.text }]}>
+                {language === 'en' ? 'Instant Offline Receiver Credit' : 'প্রাপককে তাৎক্ষণিক অফলাইন টাকা দিন'}
+              </Text>
+            </View>
+            <Text style={[styles.offlineCardSubtitle, { color: theme.textSecondary }]}>
+              {language === 'en'
+                ? `Ask @${receiverUsername} to scan this QR code with their DPT app to claim ৳${amount} instantly offline.`
+                : `প্রাপক @${receiverUsername}-কে তার DPT অ্যাপ দিয়ে এই কিউআরটি স্ক্যান করতে বলুন যাতে তিনি অফলাইনেই সাথে সাথে ৳${amount} পেয়ে যান।`}
+            </Text>
+            <View style={styles.qrWrapper}>
+              <QRCode
+                value={offlineReceipt}
+                size={180}
+                color={theme.textDark || '#000000'}
+                backgroundColor="#FFFFFF"
+              />
+            </View>
+            <View style={styles.offlineBadge}>
+              <Ionicons name="shield-checkmark" size={14} color={theme.success} />
+              <Text style={[styles.offlineBadgeText, { color: theme.success }]}>
+                {language === 'en' ? 'Single-Use Cryptographically Signed' : 'এককালীন ব্যবহারযোগ্য ডিজিটালভাবে স্বাক্ষরিত'}
+              </Text>
+            </View>
+          </View>
+        )}
 
         {/* Security Banner */}
         <View style={[styles.securityBanner, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : '#F8F7FF', borderColor: theme.border }]}>
@@ -507,5 +555,59 @@ const styles = StyleSheet.create({
   },
   btnIcon: {
     marginRight: Spacing.sm,
+  },
+  offlineCard: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.lg,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: Spacing.xl,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  offlineCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
+  },
+  offlineCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: Spacing.xs,
+  },
+  offlineCardSubtitle: {
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: Spacing.lg,
+    paddingHorizontal: Spacing.sm,
+  },
+  qrWrapper: {
+    padding: Spacing.md,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+    marginBottom: Spacing.md,
+  },
+  offlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: Spacing.md,
+    borderRadius: 20,
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+  },
+  offlineBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginLeft: 6,
   },
 });

@@ -23,13 +23,16 @@ import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+import * as db from '../services/db';
+import { verifyQRPayload, verifyOfflinePaymentReceipt, OfflinePaymentReceipt } from '../services/crypto';
+import { syncService } from '../services/sync';
 
 export default function QRPay() {
   const router = useRouter();
   const { theme, isDarkMode } = useAppTheme();
   const { language } = useLanguage();
   const t = translations[language];
-  const { user } = useAuth();
+  const { user, updateUser } = useAuth();
 
   // Camera permissions
   const [permission, requestPermission] = useCameraPermissions();
@@ -67,16 +70,173 @@ export default function QRPay() {
     try {
       const parsed = JSON.parse(data);
 
+      // =========================================================================
+      // 2-WAY OFFLINE QR HANDSHAKE: RECEIVER SCANS SENDER'S RECEIPT QR TO CLAIM
+      // =========================================================================
+      if (parsed.app === 'dpt' && parsed.type === 'offline_receipt') {
+        const receipt = parsed as OfflinePaymentReceipt;
+        const normalizedCurrentUser = (user?.username || '').trim().toLowerCase();
+        const targetReceiver = (receipt.receiver || '').trim().toLowerCase();
+
+        // 1. Verify Recipient Identity
+        if (targetReceiver !== normalizedCurrentUser) {
+          Alert.alert(
+            language === 'en' ? 'Incorrect Recipient' : 'ভুল প্রাপক',
+            language === 'en'
+              ? `This payment receipt is intended for @${receipt.receiver}, not your account (@${user?.username}).`
+              : `এই পেমেন্ট রশিদটি @${receipt.receiver}-এর জন্য তৈরি করা হয়েছে, আপনার অ্যাকাউন্টের (@${user?.username}) জন্য নয়।`,
+            [{ text: 'OK', onPress: () => { setScanned(false); setIsScanning(false); } }]
+          );
+          return;
+        }
+
+        // 2. Anti-Replay Check (Nonce Burn)
+        const isReplayed = await db.isQrNonceUsed(receipt.nonce);
+        if (isReplayed) {
+          Alert.alert(
+            language === 'en' ? 'Receipt Already Claimed' : 'রশিদটি ইতিমধ্যে গ্রহণ করা হয়েছে',
+            language === 'en'
+              ? 'This offline payment has already been credited to your account and cannot be claimed again.'
+              : 'এই অফলাইন পেমেন্টটি ইতিমধ্যে আপনার অ্যাকাউন্টে জমা হয়েছে এবং পুনরায় গ্রহণ করা যাবে না।',
+            [{ text: 'OK', onPress: () => { setScanned(false); setIsScanning(false); } }]
+          );
+          return;
+        }
+
+        // 3. Cryptographic Signature Verification
+        const isSigValid = await verifyOfflinePaymentReceipt(receipt);
+        if (!isSigValid) {
+          Alert.alert(
+            language === 'en' ? 'Security Alert' : 'নিরাপত্তা সতর্কতা',
+            language === 'en'
+              ? 'Cryptographic signature verification failed. This receipt may be counterfeit.'
+              : 'ডিজিটাল স্বাক্ষর যাচাই ব্যর্থ হয়েছে। এই রশিদটি জাল হতে পারে।',
+            [{ text: 'OK', onPress: () => { setScanned(false); setIsScanning(false); } }]
+          );
+          return;
+        }
+
+        // 4. Burn Nonce Immediately to Prevent Double-Claiming
+        await db.markQrNonceUsed(receipt.nonce, receipt.sender, user!.username);
+
+        // 5. Instant Local SQLite Balance Credit
+        const claimAmount = parseFloat(String(receipt.amount));
+        const currentBal = parseFloat(String(user?.balance || 0));
+        const newBalance = currentBal + claimAmount;
+
+        if (user) {
+          await updateUser({
+            ...user,
+            balance: newBalance,
+          });
+          try {
+            await db.saveCachedUser(user.username, {
+              ...user,
+              balance: newBalance,
+            });
+          } catch (_) {}
+        }
+
+        // 6. Record Incoming Transaction in Local SQLite
+        const incomingTx = {
+          id: receipt.ref || `OFF-REC-${Date.now()}`,
+          sender_username: receipt.sender,
+          receiver_username: user!.username,
+          amount: claimAmount,
+          type: 'receive_money',
+          status: 'success',
+          reference: receipt.ref || `OFF-REC-${Date.now()}`,
+          created_at: new Date(receipt.timestamp || Date.now()).toISOString(),
+        };
+        await db.mergeCachedTransactions(user!.username, [incomingTx]);
+
+        // 7. Enqueue in Pending Offline Transactions for Server Reconciliation
+        await db.savePendingOfflineTransaction(
+          receipt.sender,
+          user!.username,
+          claimAmount,
+          'receive_money',
+          receipt.ref || `OFF-REC-${Date.now()}`
+        );
+
+        // 8. Notify Dashboard & Active Listeners
+        syncService.notifyDataChanged();
+
+        Alert.alert(
+          language === 'en' ? 'Money Received Offline!' : 'অফলাইনে টাকা গ্রহণ সফল!',
+          language === 'en'
+            ? `৳${claimAmount.toLocaleString()} received instantly from @${receipt.sender}. Your new balance is ৳${newBalance.toLocaleString()}.`
+            : `@${receipt.sender} থেকে অফলাইনে তাৎক্ষণিক ৳${claimAmount.toLocaleString()} জমা হয়েছে। আপনার নতুন ব্যালেন্স ৳${newBalance.toLocaleString()}।`,
+          [
+            {
+              text: language === 'en' ? 'View Dashboard' : 'ড্যাশবোর্ড দেখুন',
+              onPress: () => router.replace('/dashboard'),
+            },
+          ]
+        );
+        return;
+      }
+
       if (parsed.app === 'dpt' && parsed.username) {
         const username = parsed.username.trim().toLowerCase();
 
-        // NOTE: currently treats all QR-identified users as personal accounts. Once backend exposes account_type via /check-receiver, branch here to route merchant/biller accounts to a dedicated merchant-payment confirmation flow instead.
+        // Dynamic QR (Version 2): Verify signature, timestamp TTL, and burn nonce
+        if (parsed.version === 2 && parsed.sig && parsed.nonce && parsed.timestamp) {
+          const now = Date.now();
+          const ageMs = now - Number(parsed.timestamp);
+
+          // 1. Check TTL Expiration (90s window to tolerate clock skew)
+          if (ageMs > 90000 || ageMs < -30000) {
+            Alert.alert(
+              language === 'en' ? 'QR Code Expired' : 'কিউআর কোডের মেয়াদ শেষ',
+              language === 'en'
+                ? 'This dynamic QR code has expired. Please ask the recipient to refresh their screen.'
+                : 'এই ডায়নামিক কিউআর কোডটির মেয়াদ শেষ হয়েছে। অনুগ্রহ করে প্রাপককে তার স্ক্রিন রিফ্রেশ করতে বলুন।',
+              [{ text: 'OK', onPress: () => setScanned(false) }]
+            );
+            return;
+          }
+
+          // 2. Replay check (nonce burn)
+          const isReplayed = await db.isQrNonceUsed(parsed.nonce);
+          if (isReplayed) {
+            Alert.alert(
+              language === 'en' ? 'QR Already Used' : 'কিউআর কোডটি ইতিমধ্যে ব্যবহৃত',
+              language === 'en'
+                ? 'This QR code has already been scanned and cannot be reused.'
+                : 'এই কিউআর কোডটি ইতিমধ্যে স্ক্যান করা হয়েছে এবং পুনরায় ব্যবহার করা যাবে না।',
+              [{ text: 'OK', onPress: () => setScanned(false) }]
+            );
+            return;
+          }
+
+          // 3. Cryptographic Signature verification
+          const baseData = `dpt:v2:${parsed.username}:${parsed.timestamp}:${parsed.nonce}`;
+          const isSigValid = await verifyQRPayload(baseData, parsed.sig);
+          if (!isSigValid) {
+            Alert.alert(
+              language === 'en' ? 'Security Alert' : 'নিরাপত্তা সতর্কতা',
+              language === 'en'
+                ? 'Cryptographic signature verification failed. This QR code may be counterfeit or modified.'
+                : 'ডিজিটাল স্বাক্ষর যাচাই ব্যর্থ হয়েছে। এই কিউআর কোডটি জাল বা পরিবর্তিত হতে পারে।',
+              [{ text: 'OK', onPress: () => setScanned(false) }]
+            );
+            return;
+          }
+
+          // Burn nonce immediately
+          await db.markQrNonceUsed(parsed.nonce, user?.username || 'unknown', username);
+        }
+
+        const merchantDisplayName = parsed.name || parsed.merchantName || username;
+
+        // Check receiver account existence
         const result = await api.checkReceiver(username);
         if (result.success) {
           router.replace({
             pathname: '/qr-amount',
             params: {
-              merchantName: username,
+              merchantName: merchantDisplayName,
               merchantHandle: `@${username}`,
             },
           });
@@ -88,7 +248,7 @@ export default function QRPay() {
             router.replace({
               pathname: '/qr-amount',
               params: {
-                merchantName: username,
+                merchantName: merchantDisplayName,
                 merchantHandle: `@${username}`,
               },
             });

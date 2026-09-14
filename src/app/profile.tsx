@@ -191,12 +191,33 @@ export default function Profile() {
       iconName: 'help-circle-outline',
       iconBg: isDarkMode ? '#2C2754' : '#FAF9FF',
       iconColor: theme.primary,
+      action: () => {
+        Alert.alert(
+          'Help & Support',
+          'Need help with DPT?\n\n' +
+          '📞 Contact Us:\n' +
+          '• Email: support@dpt-banking.com\n' +
+          '• Phone: +880-1XXX-XXXXXX\n' +
+          '• Visit your nearest branch\n\n' +
+          '❓ Common Issues:\n' +
+          '• Forgot PIN → Visit bank branch with NID\n' +
+          '• Transaction failed → Check transaction history\n' +
+          '• Offline not working → Ensure app is updated\n' +
+          '• NFC issues → Enable NFC in phone settings\n\n' +
+          '🔒 Security:\n' +
+          '• Never share your PIN with anyone\n' +
+          '• Bank will never ask for your PIN\n' +
+          '• Report suspicious activity immediately',
+          [{ text: 'OK' }]
+        );
+      },
     },
     {
       title: 'About DPT',
       iconName: 'information-circle-outline',
       iconBg: isDarkMode ? '#2C2754' : '#FAF9FF',
       iconColor: theme.primary,
+      route: '/about',
     },
   ];
 

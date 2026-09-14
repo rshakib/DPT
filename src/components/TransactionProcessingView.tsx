@@ -136,7 +136,35 @@ export function TransactionProcessingView({
       const receiver = Array.isArray(receiverUsername) ? receiverUsername[0] : receiverUsername || '';
       const cleanedReceiver = receiver.startsWith('@') ? receiver.slice(1) : receiver;
 
-      const result = await api.transfer(user.username, cleanedReceiver, cleanedAmount, idempotencyKeyRef.current);
+      let result: any = null;
+      let attempts = 0;
+      const isQr = type === 'qr_payment';
+      const maxAttempts = isQr ? 5 : 1;
+
+      while (attempts < maxAttempts) {
+        attempts++;
+        try {
+          result = await api.transfer(user.username, cleanedReceiver, cleanedAmount, idempotencyKeyRef.current);
+        } catch (netErr: any) {
+          result = { success: false, message: netErr.message || 'Network connection failed' };
+        }
+
+        if (result?.success) {
+          break;
+        }
+
+        const errorMsg = (result?.message || '').toLowerCase();
+        const isNetwork = errorMsg.includes('network') || errorMsg.includes('fetch') || errorMsg.includes('connection failed');
+        // If offline network error on initial attempt, exit loop to queue offline
+        if (isNetwork) {
+          break;
+        }
+
+        // Retry with a 1-second pause if attempts remaining
+        if (attempts < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
 
       if (!isMounted.current) return;
 
@@ -186,10 +214,14 @@ export function TransactionProcessingView({
         });
       } else {
         const errorMsg = result.message || '';
+        const isNetworkError = errorMsg.toLowerCase().includes('network') || errorMsg.toLowerCase().includes('fetch') || errorMsg.toLowerCase().includes('connection failed');
 
-        if (errorMsg.toLowerCase().includes('network') || errorMsg.toLowerCase().includes('fetch') || errorMsg.toLowerCase().includes('connection failed')) {
+        if (isNetworkError) {
           const offlineRef = `OFF-${Math.floor(100000 + Math.random() * 900000)}`;
-          await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), offlineRef);
+          await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), offlineRef, {
+            nonRefundable: isQr,
+            retryCount: 0,
+          });
 
           const currentBal = parseFloat(user.balance || 0);
           const newBal = Math.max(0, currentBal - cleanedAmount);
@@ -241,6 +273,68 @@ export function TransactionProcessingView({
               mobileNumber,
               operator,
               merchantName,
+            },
+          });
+          return;
+        }
+
+        // If QR payment failed after 5 live retries:
+        // Permanently cut money from sender (no refund) and alert bank
+        if (isQr && attempts >= 5) {
+          const currentBal = parseFloat(user.balance || 0);
+          const newBal = Math.max(0, currentBal - cleanedAmount);
+          const currentSpent = parseFloat(user.today_spent || 0);
+          const newSpent = currentSpent + cleanedAmount;
+
+          await updateUser({
+            ...user,
+            balance: newBal,
+            today_spent: newSpent,
+          });
+
+          try {
+            await db.saveCachedUser(user.username, { ...user, balance: newBal, today_spent: newSpent });
+          } catch (e) {}
+
+          const failRef = `FAIL-QR-${Math.floor(100000 + Math.random() * 900000)}`;
+
+          // Report permanent failure to bank
+          await api.reportFailedTransaction({
+            username: user.username,
+            receiver: cleanedReceiver,
+            amount: cleanedAmount,
+            retries: 5,
+            reference: failRef,
+            reason: result?.message || 'QR Payment failed after 5 retries. Debited permanently without refund.',
+          });
+
+          // Save failed transaction to SQLite cache as forfeited_no_refund
+          const failedTx = {
+            id: failRef,
+            sender_username: user.username,
+            receiver_username: cleanedReceiver,
+            amount: cleanedAmount,
+            type: 'qr_payment',
+            status: 'forfeited_no_refund',
+            failure_reason: '৫ বার চেষ্টার পরও পেমেন্ট ব্যর্থ হয়েছে। টাকা স্থায়ীভাবে কর্তন করা হয়েছে এবং ব্যাংককে রিপোর্ট পাঠানো হয়েছে।',
+            reference: failRef,
+            created_at: new Date().toISOString(),
+          };
+          await db.mergeCachedTransactions(user.username, [failedTx]);
+          syncService.notifyDataChanged();
+
+          safeReplace({
+            pathname: '/transaction-result',
+            params: {
+              status: 'failed_unrefunded',
+              receiverUsername: cleanedReceiver,
+              amount: cleanedAmount.toString(),
+              referenceNo: failRef,
+              dateTime: new Date().toLocaleString(),
+              type,
+              errorReason: language === 'en'
+                ? 'Payment failed after 5 attempts. Funds debited and bank notified.'
+                : '৫ বার চেষ্টার পরও লেনদেন সম্পন্ন হয়নি। টাকা কর্তন করা হয়েছে এবং ব্যাংককে অবহিত করা হয়েছে।',
             },
           });
           return;

@@ -72,6 +72,12 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
             profile_image TEXT,
             display_name TEXT
           );
+          CREATE TABLE IF NOT EXISTS used_qr_nonces (
+            nonce TEXT PRIMARY KEY,
+            scanned_at_epoch INTEGER,
+            sender TEXT,
+            receiver TEXT
+          );
         `);
 
         // Schema migrations for existing tables
@@ -155,7 +161,7 @@ export async function getTodaySpent(username: string): Promise<number> {
        WHERE username = ? 
        AND created_at_epoch >= ? 
        AND status = 'success'
-       AND (type = 'transfer' OR type = 'user_transfer' OR type = 'send_money' OR type = 'merchant_payment' OR type = 'mobile_recharge' OR type = 'bill_payment' OR type = 'cashout' OR type = 'cash_out' OR type = 'qr_payment')`,
+       AND (type = 'transfer' OR type = 'user_transfer' OR type = 'send_money' OR type = 'merchant_payment' OR type = 'mobile_recharge' OR type = 'bill_payment' OR type = 'cashout' OR type = 'cash_out' OR type = 'qr_payment' OR type = 'nfc_transfer')`,
       [username, startOfDayEpoch]
     );
 
@@ -381,13 +387,26 @@ export async function savePendingOfflineTransaction(
   receiver: string,
   amount: number,
   type: string,
-  reference: string
+  reference: string,
+  options?: { nonRefundable?: boolean; retryCount?: number }
 ): Promise<void> {
   try {
     const db = await getDb();
     const createdAt = new Date().toISOString();
     const createdAtEpoch = Date.now();
-    const payload = { id: reference, username, receiver, amount, type, reference, createdAt };
+    const retryCount = options?.retryCount || 0;
+    const nonRefundable = options?.nonRefundable ? true : (type === 'qr_payment');
+    const payload = {
+      id: reference,
+      username,
+      receiver,
+      amount,
+      type,
+      reference,
+      createdAt,
+      retryCount,
+      nonRefundable,
+    };
 
     await db.runAsync(
       `INSERT OR REPLACE INTO pending_offline_transactions (id, username, receiver, amount, type, created_at, created_at_epoch, status, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -395,6 +414,29 @@ export async function savePendingOfflineTransaction(
     );
   } catch (error) {
     console.warn('Failed to save pending offline transaction:', error);
+  }
+}
+
+/**
+ * Update retry count for a pending offline transaction.
+ */
+export async function updatePendingOfflineTransactionRetry(id: string, retryCount: number): Promise<void> {
+  try {
+    const db = await getDb();
+    const row = await db.getFirstAsync<{ raw_json: string }>(
+      'SELECT raw_json FROM pending_offline_transactions WHERE id = ?',
+      [id]
+    );
+    if (row && row.raw_json) {
+      const parsed = JSON.parse(row.raw_json);
+      parsed.retryCount = retryCount;
+      await db.runAsync(
+        'UPDATE pending_offline_transactions SET raw_json = ? WHERE id = ?',
+        [JSON.stringify(parsed), id]
+      );
+    }
+  } catch (error) {
+    console.warn('Failed to update pending offline transaction retry:', error);
   }
 }
 
@@ -501,5 +543,89 @@ export async function getDisplayName(username: string): Promise<string | null> {
   } catch (error) {
     console.warn('Failed to get display name:', error);
     return null;
+  }
+}
+
+/**
+ * Check if a QR nonce has already been consumed (replay attack protection).
+ */
+export async function isQrNonceUsed(nonce: string): Promise<boolean> {
+  if (!nonce) return true;
+  try {
+    const db = await getDb();
+    const row = await db.getFirstAsync<{ nonce: string }>(
+      'SELECT nonce FROM used_qr_nonces WHERE nonce = ?',
+      [nonce]
+    );
+    return !!row;
+  } catch (error) {
+    console.warn('Failed to check QR nonce:', error);
+    return false;
+  }
+}
+
+/**
+ * Permanently mark a QR nonce as consumed to burn replay attempts.
+ */
+export async function markQrNonceUsed(nonce: string, sender: string, receiver: string): Promise<void> {
+  if (!nonce) return;
+  try {
+    const db = await getDb();
+    await db.runAsync(
+      'INSERT OR IGNORE INTO used_qr_nonces (nonce, scanned_at_epoch, sender, receiver) VALUES (?, ?, ?, ?)',
+      [nonce, Date.now(), sender, receiver]
+    );
+  } catch (error) {
+    console.warn('Failed to mark QR nonce as used:', error);
+  }
+}
+
+/**
+ * Irreversibly deduct a security penalty from the user's balance and record an immutable forfeiture.
+ */
+export async function recordSecurityPenaltyLocal(
+  username: string,
+  penaltyAmount: number,
+  reason: string
+): Promise<{ success: boolean; newBalance: number }> {
+  try {
+    const db = await getDb();
+    const cachedUser = await getCachedUser(username);
+    const currentBalance = Number(cachedUser?.balance || 0);
+    const newBalance = Math.max(0, currentBalance - penaltyAmount);
+
+    if (cachedUser) {
+      cachedUser.balance = newBalance;
+      await saveCachedUser(username, cachedUser);
+    }
+
+    const txId = `PENALTY-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    const nowIso = new Date().toISOString();
+    const penaltyTx = {
+      id: txId,
+      sender_username: username,
+      receiver_username: 'BANK_SECURITY_ESCROW',
+      amount: penaltyAmount,
+      type: 'security_fraud_penalty',
+      status: 'forfeited_no_refund',
+      failure_reason: reason,
+      reference: txId,
+      created_at: nowIso,
+    };
+    await mergeCachedTransactions(username, [penaltyTx]);
+
+    const penaltyNotif = {
+      id: `notif-penalty-${Date.now()}`,
+      title: 'নিরাপত্তা জরিমানা কর্তন ⚠️',
+      message: `পরপর ৫ বার প্রতারণামূলক QR চেষ্টার কারণে ৳${penaltyAmount} নিরাপত্তা জরিমানা কেটে নেওয়া হয়েছে এবং ব্যাংকে জানানো হয়েছে।`,
+      notification_type: 'security_penalty',
+      created_at: nowIso,
+    };
+    await mergeCachedNotifications(username, [penaltyNotif]);
+
+    return { success: true, newBalance };
+  } catch (error) {
+    console.warn('Failed to record security penalty locally:', error);
+    return { success: false, newBalance: 0 };
   }
 }

@@ -22,6 +22,8 @@
     - [Table 1: `cached_user`](#table-1-cached_user)
     - [Table 2: `cached_transactions`](#table-2-cached_transactions)
     - [Table 3: `cached_notifications`](#table-3-cached_notifications)
+    - [Table 4: `pending_offline_transactions`](#table-4-pending_offline_transactions)
+    - [Table 5: `user_settings`](#table-5-user_settings)
   - [7. SyncService \& Background Delta Sync Logic](#7-syncservice--background-delta-sync-logic)
   - [8. Authentication, Session Restore \& Lock Engine](#8-authentication-session-restore--lock-engine)
   - [9. 2-Step Security Protocol (PIN -\> Biometrics)](#9-2-step-security-protocol-pin---biometrics)
@@ -53,10 +55,38 @@
     - [17.3 Concurrency \& Duplicate Navigation Guards](#173-concurrency--duplicate-navigation-guards)
     - [17.4 Brand Asset Migration \& UI Refinements](#174-brand-asset-migration--ui-refinements)
     - [17.5 Offline-First Transaction System (Complete Implementation)](#175-offline-first-transaction-system-complete-implementation)
+      - [A. Architecture Overview](#a-architecture-overview)
+      - [B. Offline Transaction Flow](#b-offline-transaction-flow)
+      - [C. Reconciliation Flow (When Internet Returns)](#c-reconciliation-flow-when-internet-returns)
+      - [D. Files Modified](#d-files-modified)
+      - [E. Security](#e-security)
     - [17.6 UI Redesigns](#176-ui-redesigns)
+      - [A. Transaction Result Page (`transaction-result.tsx`)](#a-transaction-result-page-transaction-resulttsx)
+      - [B. Quick Unlock Page (`quick-unlock.tsx`)](#b-quick-unlock-page-quick-unlocktsx)
+      - [C. Login Page (`login.tsx`)](#c-login-page-logintsx)
+      - [D. Themed Reconciliation Popup (`ReconciliationPopup.tsx`)](#d-themed-reconciliation-popup-reconciliationpopuptsx)
     - [17.7 New Features](#177-new-features)
+      - [A. Wallet Display Name](#a-wallet-display-name)
+      - [B. Profile Picture](#b-profile-picture)
+      - [C. Backend Keep-Alive (Render + Supabase)](#c-backend-keep-alive-render--supabase)
+      - [D. Sol Theme as Default](#d-sol-theme-as-default)
     - [17.8 Bug Fixes](#178-bug-fixes)
+      - [A. Network Error Detection](#a-network-error-detection)
+      - [B. Duplicate Transaction Records](#b-duplicate-transaction-records)
+      - [C. Transaction Not Showing in History](#c-transaction-not-showing-in-history)
+      - [D. Popup Showing on Lock Screen](#d-popup-showing-on-lock-screen)
+      - [E. InteractionManager Deprecation](#e-interactionmanager-deprecation)
+      - [F. Display Name SQLite Migration](#f-display-name-sqlite-migration)
+      - [G. Sync Stuck When Offline](#g-sync-stuck-when-offline)
     - [17.9 Dependencies Added](#179-dependencies-added)
+  - [18. Known Issues \& Next Session TODO](#18-known-issues--next-session-todo)
+    - [18.1 Transaction History Issue (Pending Fix)](#181-transaction-history-issue-pending-fix)
+  - [19. Anti-Clone Dynamic Rolling QR Protocol \& 5-Retry Non-Refundable Settlement Engine](#19-anti-clone-dynamic-rolling-qr-protocol--5-retry-non-refundable-settlement-engine)
+    - [19.1 Uncopyable Dynamic Rolling QR Code System (`my-qr.tsx` \& `qr-pay.tsx`)](#191-uncopyable-dynamic-rolling-qr-code-system-my-qrtsx--qr-paytsx)
+    - [19.2 Automated 5-Retry Payment Settlement Engine (Online \& Offline Reconnection)](#192-automated-5-retry-payment-settlement-engine-online--offline-reconnection)
+    - [19.3 Dual-Mode QR Architecture (Dynamic Anti-Clone vs Permanent QR)](#193-dual-mode-qr-architecture-dynamic-anti-clone-vs-permanent-qr)
+    - [19.4 NFC Mobile-to-Mobile Architecture (Native Android HCE \& High-Speed ReaderMode Transceiver)](#194-nfc-mobile-to-mobile-architecture-native-android-hce--high-speed-readermode-transceiver)
+    - [19.5 2-Way Offline QR Handshake (Reverse Receipt Scan for Instant Offline Receiver Settlement)](#195-2-way-offline-qr-handshake-reverse-receipt-scan-for-instant-offline-receiver-settlement)
 
 ---
 
@@ -139,6 +169,7 @@
     │   ├── qr-pay-confirm.tsx               # QR payment 2-Step Auth -> transaction-processing route
     │   ├── my-qr.tsx                        # User personal QR code generator (download, share)
     │   ├── features.tsx                     # Additional Features accordion (Email, QR, NFC, Card)
+    │   ├── nfc-transfer.tsx                 # Standalone offline NFC P2P transfer (Send/Receive modes, 2-Step PIN+Bio, NDEF write/read, offline queue)
     │   ├── officer-verify.tsx               # Officer activation code verification (NID, Code, Username)
     │   ├── enter-name.tsx                   # Full name input for new account registration
     │   ├── biometric-enrollment.tsx         # Initial biometric setup (fingerprint SVG ring, hardware check)
@@ -168,7 +199,9 @@
     ├── services/                            # CORE SERVICES
     │   ├── api.ts                           # REST API client (login, register, checkReceiver, transfer w/ idempotency, getUser, getTransactions, getNotifications, verifyPin, safeParseJsonResponse)
     │   ├── db.ts                            # Expo SQLite (4 tables: cached_user, cached_transactions, cached_notifications, pending_offline_transactions; epoch-based sorting, schema migrations, offline queue)
-    │   └── sync.ts                          # SyncService background 15s delta sync manager (initialSync, deltaSync, subscribe/notify)
+    │   ├── sync.ts                          # SyncService background 15s delta sync manager (initialSync, deltaSync, subscribe/notify)
+    │   ├── nfc.ts                           # NFC P2P transfer service (react-native-nfc-manager, NDEF write/read, nonce/txid generation)
+    │   └── crypto.ts                        # RSA-2048 key generation & SecureStore management (node-forge)
     └── utils/                               # UTILITY HELPERS
         ├── transactionMapper.ts            # Maps raw API transactions to normalized UI structures (icon, color, time formatting, timestampMs)
         └── security.ts                     # Hardware-isolated salted SHA-256 local PIN hashing, 3-strike 15-min lockout, UUID generator
@@ -365,7 +398,7 @@ Centralized in `ThemeContext.tsx` & `src/constants/theme.ts`:
 1. **`index.tsx`**: `[Have Activation Code]` $\rightarrow$ `/officer-verify`, `[Already Registered? Login]` $\rightarrow$ `/login`.
 2. **`login.tsx`**: `[Eye Icon]` toggles password, `[Login]` calls `AuthContext.login()` $\rightarrow$ `/dashboard`, `[Activate new account]` $\rightarrow$ `/officer-verify`.
 3. **`quick-unlock.tsx`**: PIN Keypad (0-9, Backspace), Fingerprint Circle scan, 3-strike 15-min brute-force lockout, `[Switch Account]` $\rightarrow$ `/login`, `[Logout]` $\rightarrow$ `/login`.
-4. **`dashboard.tsx`**: Eye icon balance toggle, Profile avatar $\rightarrow$ `/profile`, 8 grid feature items, recent activity list, 5 bottom tabs (Home, History, QR FAB, Alerts, Profile).
+4. **`dashboard.tsx`**: Eye icon balance toggle, Profile avatar $\rightarrow$ `/profile`, 8 grid feature items (Send Money, Merchant Payment, Mobile Recharge, Bill Payment, Cash Out, My QR $\rightarrow$ `/my-qr`, Transaction History, NFC Transfer), recent activity list, 5 bottom tabs (Home, History, Centered 'QR PAY' FAB $\rightarrow$ `/qr-pay`, Alerts, Profile).
 5. **`history.tsx`**: Filter tabs (All, Successful, Failed), Day-wise date filter pills (All Time, Today, Yesterday, Last 7 Days, Last 30 Days), CSV export icon, card click $\rightarrow$ `/transaction-result`.
 6. **`notifications.tsx`**: Item click toggles local read status (persisted in SecureStore), deduplicates login notifications to show only the freshest login notification.
 7. **`profile.tsx`**: Avatar with camera badge, menu card groups (Personal Info, Accounts, Payment Methods, Limits, Security Center $\rightarrow$ `/security`, Settings $\rightarrow$ `/settings`, Notifications $\rightarrow$ `/notifications`, Help, About, Logout).
@@ -386,6 +419,7 @@ Centralized in `ThemeContext.tsx` & `src/constants/theme.ts`:
 22. **`activation-success.tsx`**: Confetti decoration, concentric success badge, features list card, `[Enter Application]` or `[Go to Login]`.
 23. **`transaction-processing.tsx`**: Legacy 3-step animated processing overlay (Validating $\rightarrow$ Checking Limit $\rightarrow$ Submitting), handles service payments and offline queue.
 24. **`transaction-result.tsx`**: Status badge with confetti/sparkles, transaction details card (type-aware: P2P, recharge, merchant, bill), copy reference, `[Back to Home]` / `[View History]` buttons.
+25. **`nfc-transfer.tsx`**: Standalone offline NFC P2P transfer screen. Provides Send/Receive mode picker, sequential 2-Step PIN + Biometric verification (`verifyPinLocally`), daily limit validation, animated pulsing tap radar, NDEF payload transmission with replay-proof nonce/txid, immediate local SQLite balance updates (`cached_user`), and automatic `pending_offline_transactions` queueing for background reconciliation.
 
 ---
 
@@ -1660,3 +1694,135 @@ All 5 payment flows (Send Money, Merchant Payment, Mobile Recharge, Bill Payment
 - **Problem**: Transaction history has a loading/display issue that needs investigation and resolution
 - **Details**: To be analyzed and documented in the next development session
 - **Priority**: High
+
+---
+
+## 19. Anti-Clone Dynamic Rolling QR Protocol & 5-Retry Non-Refundable Settlement Engine
+
+### 19.1 Uncopyable Dynamic Rolling QR Code System (`my-qr.tsx` & `qr-pay.tsx`)
+- **Vulnerability Solved**: Eliminates static QR screenshots, cloned photos, and replay attacks.
+- **Cryptographic Payload Structure (Version 2)**:
+  ```json
+  {
+    "app": "dpt",
+    "version": 2,
+    "username": "shakib",
+    "timestamp": 1725900000000,
+    "nonce": "a7b3c2d1-4e5f-6a7b-8c9d-0e1f2a3b4c5d",
+    "sig": "<RSA-SHA256 digital signature / HMAC>"
+  }
+  ```
+- **30-Second Rolling Generation**:
+  - `my-qr.tsx` automatically generates a fresh payload with a unique cryptographic `nonce` and timestamp every 30 seconds.
+  - Visual countdown bar and progress indicator inform the user of code validity, with a manual refresh button available.
+- **Scanner Verification & Nonce Burning (`qr-pay.tsx`)**:
+  - User scans the QR code **once**.
+  - **TTL Validation**: Verifies timestamp age $\le$ 90 seconds (allows for device clock skew). Expired QRs are rejected with an alert.
+  - **Replay Check & Nonce Burning**: Queries `isQrNonceUsed(nonce)` against SQLite table `used_qr_nonces`. If already seen, the scan is blocked immediately. Valid nonces are instantly burned via `markQrNonceUsed(nonce, sender, receiver)`.
+  - **Digital Signature Verification**: Validates `verifyQRPayload(baseData, sig)`.
+  - **Strict Destination Lock**: The scanned recipient username is strictly locked into navigation parameters, preventing spoofing or redirection.
+
+---
+
+### 19.2 Automated 5-Retry Payment Settlement Engine (Online & Offline Reconnection)
+- **Design Intent**: Single user scan and authorization triggers an automated 5-retry engine for payment transmission. If all 5 attempts fail, the payment money is **permanently cut from the sender without refund**, and the bank server is notified.
+- **Online Execution Flow** (`TransactionProcessingView.tsx` & `transaction-processing.tsx`):
+  - When `type === 'qr_payment'`, execution wraps `api.transfer()` in an automatic 5-attempt loop (1-second backoff between attempts).
+  - **Network Offline Condition**: If initial attempt detects offline status (`network`, `fetch`, `connection failed`), execution skips memory looping and queues to SQLite `pending_offline_transactions` with `nonRefundable: true` and `retryCount: 0`.
+  - **5-Retry Failure Condition**: If 5 live server attempts fail:
+    1. Sender balance is **permanently deducted** in Context and SQLite `cached_user` (`saveCachedUser`).
+    2. Bank alert dispatched via `api.reportFailedTransaction({ username, receiver, amount, retries: 5, reference, reason })` (`POST /bank-transaction-failure`).
+    3. Transaction recorded in SQLite `cached_transactions` with `status: 'forfeited_no_refund'`.
+    4. Receipt displays `status: 'failed_unrefunded'` with Bengali notification: *"৫ বার চেষ্টার পরও লেনদেন সম্পন্ন হয়নি। নিয়ম অনুযায়ী টাকা কর্তন করা হয়েছে এবং ব্যাংককে অবহিত করা হয়েছে।"*
+- **Offline-to-Online Background Reconciliation** (`sync.ts`):
+  - In `deltaSync()`, pending offline transactions with `nonRefundable: true` are tracked across sync cycles (`retryCount < 5`).
+  - On the 5th failed reconciliation attempt:
+    1. Balance refund is strictly blocked (funds remain permanently deducted).
+    2. Bank failure alert dispatched via `api.reportFailedTransaction(...)`.
+    3. SQLite transaction updated to `status: 'forfeited_no_refund'`.
+    4. Permanent debit alert notification stored in `cached_notifications` and emitted to user.
+- **UI Status Mapping** (`transactionMapper.ts` & `transaction-result.tsx`):
+  - `status === 'forfeited_no_refund' | 'failed_unrefunded'` maps to *"Non-Refundable"* / *"অফেরতযোগ্য"*, with error badge and alert icon.
+
+---
+
+### 19.3 Dual-Mode QR Architecture (Dynamic Anti-Clone vs Permanent QR)
+- **User Problem Solved**: Satisfies both personal anti-clone protection (single-use rolling dynamic QR, screenshots cannot be reused) and permanent physical display/counter requirements (users/merchants can generate, print, or share a static permanent QR for payments anytime).
+- **Dual-Mode Switcher in `my-qr.tsx`**:
+  - **Dynamic QR Mode (`dynamic`)**:
+    - Generates 30-second rolling signed QR code (`version: 2`) with cryptographic single-use nonce.
+    - Scanner enforces 90s TTL and burns the nonce in SQLite `used_qr_nonces` table to prevent duplication.
+  - **Permanent QR Mode (`permanent`)**:
+    - Generates permanent QR code (`version: 1`, `type: 'permanent'`, `name: displayName`).
+    - Never expires; no single-use nonce burning; allows individuals or merchants to receive repeated scans anytime.
+  - **Real Download & Share Action Buttons**:
+    - Standardized labels across all modes: **`Download QR`** (`t.downloadQrButton`) and **`Share QR`** (`t.shareQrButton`).
+    - **Download QR**: Captures SVG via `QRCode.toDataURL`. On web, triggers instant PNG file download. On mobile, saves image directly to device documents storage (`expo-file-system`) with clipboard payload backup.
+    - **Share QR**: Uses native `Share.share` from `react-native` to open system share sheet (WhatsApp, Messenger, Bluetooth, Drive, SMS) with formatted payment message, account ID, and QR payload.
+- **Intelligent Scanner Processing in `qr-pay.tsx`**:
+  - Seamlessly auto-detects payload format upon camera scan.
+  - If dynamic payload: validates TTL and executes nonce burning.
+  - If permanent payload: extracts the recipient display name, checks receiver validity, and routes straight to amount input without nonce lock.
+  - Both modes leverage the automated 5-retry payment settlement engine.
+
+---
+
+### 19.4 NFC Mobile-to-Mobile Architecture (Native Android HCE & High-Speed ReaderMode Transceiver)
+- **Technical Context & Android OS Solution**:
+  - **Android Beam Removal**: Google deprecated Android Beam in Android 10 and permanently removed it in Android 14. Standard NDEF mode (`NfcTech.Ndef`) only interfaces with passive physical RFID tags/cards.
+  - **Native Paired Solution**:
+    - **Receiver Phone (Card Emulation)**: When receiver enters Receive mode, native Android service `DptHceService` (extending `HostApduService`) is activated with Application Identifier (AID) `F0010203040506` declared in `res/xml/apduservice.xml` and `AndroidManifest.xml`. `DptHceModule` enforces `CardEmulation.setPreferredService(activity, component)` on the active resumed Activity so Android OS prioritizes this non-payment AID over system wallets while in the foreground.
+    - **Sender Phone (Native High-Speed ReaderMode)**: When sender enters Send mode, `DptHceModule` enables native `NfcAdapter.enableReaderMode` with `FLAG_READER_NFC_A`, `FLAG_READER_SKIP_NDEF_CHECK`, and `FLAG_READER_NO_PLATFORM_SOUNDS`. Bypassing NDEF checks eliminates the "NFC not read file" OS error, prevents audio jitter, and connects directly to ISO 14443-4 (`IsoDep`).
+    - **Native APDU Handshake & Data Transmission**:
+      1. Handshake: Sender sends `SELECT AID` APDU (`00 A4 04 00 07 F0 01 02 03 04 05 06 00`). Receiver replies with `{"status":"READY","receiver":"..."} + 90 00`.
+      2. Payment: Sender sends `PROCESS_PAYMENT` APDU (`80 B0 00 00 [Lc] [JSON bytes]`). Receiver verifies payload, triggers tactile haptic vibration, hands data to React Native via `DptHceModule.emitPaymentReceived(json)`, and responds with `{"status":"SUCCESS"} + 90 00`.
+      3. Confirmation: Sender receives `90 00`, triggers tactile vibration, safely disables ReaderMode, and resolves the promise in React Native.
+    - **Receiver Phone (Pure Card Emulation Target)**:
+      - Native Android service `DptHceService` (extending `HostApduService`) is permanently registered in `AndroidManifest.xml` with Application Identifier (AID) `F0010203040506`.
+      - **Zero RF Collision**: The receiver strictly acts as a listening smartcard target and **never runs reader polling** (`registerTagEvent`) in the background, preventing 13.56 MHz RF interference with the sender.
+      - **Permanent Component Registration**: Removed `PackageManager.setComponentEnabledSetting` toggles so Android OS `HostEmulationManager` keeps the AID routing table hot and bound.
+      - `DptHceModule` enforces `CardEmulation.registerAidsForService()` and `CardEmulation.setPreferredService(activity, component)` so Android prioritizes DPT while in the foreground.
+    - **Sender Phone (Dual Type A & B High-Speed ReaderMode)**:
+      - When sender initiates payment, `DptHceModule` activates `NfcAdapter.enableReaderMode` with `FLAG_READER_NFC_A | FLAG_READER_NFC_B | FLAG_READER_SKIP_NDEF_CHECK | FLAG_READER_NO_PLATFORM_SOUNDS`.
+      - Supporting both NFC-A and NFC-B ensures compatibility across Samsung, MediaTek, Xiaomi, and Google Pixel chipsets.
+      - Bypassing OS NDEF checks eliminates the "NFC not read file" error and connects directly to ISO 14443-4 (`IsoDep`).
+    - **Native APDU Handshake & Compact Data Transmission**:
+      1. Handshake: Sender sends `SELECT AID` APDU (supports both 13-byte with Le and 12-byte without Le variants). Receiver verifies `isReceiverActive` and responds with `{"status":"READY","receiver":"@username"} + 90 00`.
+      2. Compact Packet Transmission: Sender minifies the payload into compact keys (`{ t, v, s, r, a, m, i, n }`), keeping packet size below 100 bytes (safely within short APDU limits). Sender sends `PROCESS_PAYMENT` APDU (`80 B0 00 00 [Lc] [compact bytes]`).
+      3. Zero Packet Loss Dual Delivery (Push + Pull):
+         - Receiver stores the packet in an atomic static memory buffer `lastReceivedPayment`.
+         - Receiver emits push event `onNfcHcePaymentReceived` on the React Native JS thread.
+         - Concurrently, `nfc-transfer.tsx` runs a 350ms polling loop (`popReceivedPayment()`) that retrieves and clears the buffer if the event was delayed or dropped.
+         - Receiver triggers tactile haptic vibration and replies with `{"status":"SUCCESS"} + 90 00`.
+      4. Sender receives `90 00`, triggers tactile vibration, disables ReaderMode, and resolves the promise.
+    - **Settlement & Storage**: Both sender and receiver immediately update local SQLite balances (`cached_user`), record the transaction in `cached_transactions`, enqueue to `pending_offline_transactions` for background delta sync, and transition to the green success screen.
+- **Physical NFC Card/Tag Fallback**:
+  - If testing with an external physical RFID card or tag, `writeTransferNDEF` and `readTransferNDEF` execute as a secondary fallback.
+- **Offline QR Bridge**:
+  - For cross-platform transfers or environments without NFC hardware, `nfc-transfer.tsx` provides 1-tap **"Switch to Offline QR Pay"** routing to `/qr-pay` (scanner) and `/my-qr` (signed rolling dynamic QR).
+
+---
+
+### 19.5 2-Way Offline QR Handshake (Reverse Receipt Scan for Instant Offline Receiver Settlement)
+- **Problem Solved**: Standard optical QR payment is 1-way (Receiver's screen $\rightarrow$ Sender's camera). In 100% offline environments without internet, the receiver's phone cannot know it was scanned until reconnecting to mobile data or Wi-Fi.
+- **2-Way Optical Handshake Architecture**:
+  1. **Sender Offline Payment Execution** (`transaction-processing.tsx`):
+     - When offline, sender balance is immediately deducted in SQLite (`cached_user`) and queued to `pending_offline_transactions`.
+     - System executes `generateOfflinePaymentReceipt(sender, receiver, amount, ref, nonce)` in `crypto.ts`.
+     - Generates cryptographically signed offline receipt token with single-use nonce, HMAC-SHA256 signature, and timestamp.
+  2. **Sender Shows Receipt QR** (`transaction-result.tsx`):
+     - Displays dedicated **"Instant Offline Receiver Credit"** card embedding `<QRCode value={offlineReceiptJson} />`.
+     - Instructs recipient to scan this QR code using their DPT scanner to claim funds instantly offline.
+  3. **Receiver Scans Sender's Screen** (`qr-pay.tsx` & `my-qr.tsx`):
+     - Recipient taps **"Scan Sender's Receipt QR"** shortcut in `my-qr.tsx` or opens `qr-pay.tsx`.
+     - Camera scans sender's receipt QR (`type: 'offline_receipt'`).
+     - **Verification Pipeline**:
+       - *Recipient Lock*: Validates `receipt.receiver.toLowerCase() === user.username.toLowerCase()` (blocks unauthorized scanners).
+       - *Anti-Replay / Nonce Burning*: Checks `db.isQrNonceUsed(receipt.nonce)`. Rejects if previously claimed; burns nonce via `db.markQrNonceUsed()`.
+       - *Cryptographic Signature*: Verifies `verifyOfflinePaymentReceipt(receipt)` via HMAC-SHA256.
+     - **Instant Local Ledger Update**:
+       - Instantly credits recipient balance in SQLite (`cached_user`) and AuthContext (`newBalance = balance + amount`).
+       - Inserts incoming transaction in SQLite `cached_transactions` (`type: 'receive_money'`, `status: 'completed'`).
+       - Enqueues to `pending_offline_transactions` for background delta sync reconciliation when internet reconnects.
+       - Dispatches success alert and updates Dashboard in real-time with zero internet connectivity.
+

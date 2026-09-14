@@ -146,24 +146,48 @@ export async function verifyPinLocally(
   let isMatch = false;
 
   try {
-    const storedHash = await SecureStore.getItemAsync(key);
+    // 2. Check if internet is available
+    const isOnline = await checkInternetConnectivity();
 
-    if (storedHash) {
-      // Offline verification via salted SHA-256 hash comparison
-      const computedHash = await computePinHash(cleanUsername, pin);
-      if (computedHash === storedHash) {
-        isMatch = true;
-      }
-    } else {
-      // Fallback to online server verification if local hash is missing or on error
+    if (isOnline) {
+      // Internet available → verify against database (server)
+      console.log('[SECURITY] Online mode — verifying PIN against server');
       const serverResult = await api.verifyPin(cleanUsername, pin);
       if (serverResult.success) {
-        await saveLocalPinHash(cleanUsername, pin);
         isMatch = true;
+        // Save/update local hash for future offline use
+        await saveLocalPinHash(cleanUsername, pin);
+      }
+    } else {
+      // No internet → verify locally only
+      console.log('[SECURITY] Offline mode — verifying PIN locally');
+      const storedHash = await SecureStore.getItemAsync(key);
+
+      if (storedHash) {
+        // Offline verification via salted SHA-256 hash comparison
+        const computedHash = await computePinHash(cleanUsername, pin);
+        if (computedHash === storedHash) {
+          isMatch = true;
+        }
+      } else {
+        // No local hash and no internet — cannot verify
+        return { success: false, message: 'No internet connection and no local PIN data. Please connect to internet first.' };
       }
     }
   } catch (error) {
     console.warn('[SECURITY] Error during PIN verification:', error);
+    // On any error, try local verification as fallback
+    try {
+      const storedHash = await SecureStore.getItemAsync(key);
+      if (storedHash) {
+        const computedHash = await computePinHash(cleanUsername, pin);
+        if (computedHash === storedHash) {
+          isMatch = true;
+        }
+      }
+    } catch (fallbackError) {
+      console.warn('[SECURITY] Fallback verification also failed:', fallbackError);
+    }
   }
 
   if (isMatch) {
@@ -174,6 +198,24 @@ export async function verifyPinLocally(
     // Incorrect PIN: Record failed attempt and trigger 15-minute lockout on 3rd failure
     const errorMsg = await recordFailedPinAttempt(cleanUsername);
     return { success: false, message: errorMsg };
+  }
+}
+
+/**
+ * Check if device has internet connectivity.
+ */
+async function checkInternetConnectivity(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000); // 3s timeout
+    const response = await fetch('https://e-pay-fydp.onrender.com/health', {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return response.status < 500;
+  } catch {
+    return false;
   }
 }
 

@@ -95,6 +95,7 @@ function RootLayoutContent() {
         <Stack.Screen name="history" />
         <Stack.Screen name="my-qr" />
         <Stack.Screen name="features" />
+        <Stack.Screen name="about" />
         <Stack.Screen name="notifications" />
         <Stack.Screen name="security" />
         <Stack.Screen name="settings" />
