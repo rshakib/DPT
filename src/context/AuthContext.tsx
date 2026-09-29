@@ -59,7 +59,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {}
     }
-    const v = Math.min(Number(realBalance || 0), DURESS_LIMIT_DEFAULT);
+    // Random decoy amount within 0..min(real balance, L_D). It stays FIXED across
+    // duress unlocks until the real PIN is used (which resets it), and decreases
+    // whenever a transaction happens while in duress mode.
+    const cap = Math.min(Number(realBalance || 0), DURESS_LIMIT_DEFAULT);
+    const v = Math.floor(Math.random() * (cap + 1));
     setDuressBalance(v);
     if (username) {
       SecureStore.setItemAsync(duressBalKey(username), String(v)).catch(() => {});
