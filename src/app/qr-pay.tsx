@@ -157,8 +157,9 @@ export default function QRPay() {
           const now = Date.now();
           const ageMs = now - Number(parsed.timestamp);
 
-          // 1. Check TTL Expiration. Dynamic QR is single-use and valid at most 45s.
-          if (ageMs > 45000 || ageMs < -30000) {
+          // 1. Check TTL Expiration. Dynamic QR is single-use and valid at most 1
+          // minute (extra slack absorbs slow networks / clock skew).
+          if (ageMs > 60000 || ageMs < -30000) {
             Alert.alert(
               language === 'en' ? 'QR Code Expired' : 'কিউআর কোডের মেয়াদ শেষ',
               language === 'en'

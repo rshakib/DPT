@@ -36,11 +36,11 @@ export default function MyQR() {
   const username = userData?.username || 'user';
   const displayName = userData?.full_name || userData?.name || username;
 
-  // QR Mode: 'dynamic' (45s Rolling Anti-Clone) vs 'permanent' (Permanent Printable QR)
+  // QR Mode: 'dynamic' (60s Rolling Anti-Clone) vs 'permanent' (Permanent Printable QR)
   const [qrMode, setQrMode] = useState<'dynamic' | 'permanent'>('dynamic');
 
   // Dynamic Rolling QR States
-  const [timeLeft, setTimeLeft] = useState(45);
+  const [timeLeft, setTimeLeft] = useState(60);
   const [qrPayload, setQrPayload] = useState<string>(
     JSON.stringify({ app: 'dpt', username })
   );
@@ -75,11 +75,11 @@ export default function MyQR() {
       };
 
       setQrPayload(JSON.stringify(dynamicPayload));
-      setTimeLeft(45);
+      setTimeLeft(60);
     } catch (e) {
       console.warn('Failed to generate signed dynamic QR:', e);
       setQrPayload(JSON.stringify({ app: 'dpt', username }));
-      setTimeLeft(45);
+      setTimeLeft(60);
     } finally {
       setIsRefreshing(false);
     }
@@ -90,7 +90,7 @@ export default function MyQR() {
     refreshDynamicQR();
   }, [refreshDynamicQR]);
 
-  // 45-Second countdown timer - decrements only when dynamic mode is active
+  // 60-Second countdown timer - decrements only when dynamic mode is active
   useEffect(() => {
     if (qrMode !== 'dynamic') return;
 
@@ -325,8 +325,8 @@ export default function MyQR() {
                   ? 'Permanent QR code. Never expires. Print or display to receive payments anytime.'
                   : 'স্থায়ী কিউআর কোড। মেয়াদ শেষ হয় না। যেকোনো সময় পেমেন্ট গ্রহণের জন্য প্রিন্ট বা প্রদর্শন করুন।')
               : (language === 'en'
-                  ? 'Single-use dynamic QR. Refreshes every 45 seconds with digital signature for maximum security.'
-                  : 'একক ব্যবহারের ডায়নামিক QR। সর্বোচ্চ নিরাপত্তার জন্য প্রতি ৪৫ সেকেন্ডে ডিজিটাল স্বাক্ষর সহ পরিবর্তিত হয়।')}
+                  ? 'Single-use dynamic QR. Refreshes every 1 minute with digital signature for maximum security.'
+                  : 'একক ব্যবহারের ডায়নামিক QR। সর্বোচ্চ নিরাপত্তার জন্য প্রতি ১ মিনিটে ডিজিটাল স্বাক্ষর সহ পরিবর্তিত হয়।')}
           </Text>
         </View>
 
@@ -379,7 +379,7 @@ export default function MyQR() {
             </View>
           </View>
 
-          {/* Badge: Dynamic 45s Countdown vs Permanent Lifetime Valid */}
+          {/* Badge: Dynamic 60s Countdown vs Permanent Lifetime Valid */}
           {qrMode === 'dynamic' ? (
             <View
               style={[
@@ -591,8 +591,8 @@ export default function MyQR() {
                     ? 'This QR code never expires. Print or share it to receive payments anytime. All payments sent here are credited immediately.'
                     : 'এই কিউআর কোডের মেয়াদ কখনোই শেষ হবে না। এটি প্রিন্ট বা শেয়ার করে রাখুন। যে কেউ স্ক্যান করে সরাসরি পেমেন্ট করতে পারবে।')
                 : (language === 'en'
-                    ? 'This QR code auto-refreshes every 45 seconds with a cryptographic digital signature. Screenshots cannot be reused or cloned.'
-                    : 'এই কিউআর কোডটি ডিজিটাল স্বাক্ষর সহ প্রতি ৪৫ সেকেন্ডে স্বয়ংক্রিয়ভাবে পরিবর্তিত হয়। স্ক্রিনশট বা ছবি নকল করে ব্যবহার করা যাবে না।')}
+                    ? 'This QR code auto-refreshes every 1 minute with a cryptographic digital signature. Screenshots cannot be reused or cloned.'
+                    : 'এই কিউআর কোডটি ডিজিটাল স্বাক্ষর সহ প্রতি ১ মিনিটে স্বয়ংক্রিয়ভাবে পরিবর্তিত হয়। স্ক্রিনশট বা ছবি নকল করে ব্যবহার করা যাবে না।')}
             </Text>
           </View>
         </View>
