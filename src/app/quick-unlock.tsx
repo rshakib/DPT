@@ -35,7 +35,7 @@ export default function QuickUnlock() {
   const { language, toggleLanguage } = useLanguage();
   const t = translations[language];
 
-  const { user, lastLoggedInUser, logout, switchAccount, setDuressMode, initDuressBalance } = useAuth();
+  const { user, lastLoggedInUser, logout, switchAccount, setDuressMode, initDuressBalance, resetDuressBalance } = useAuth();
   const { unlock } = useAppLock();
 
   const [step, setStep] = useState<UnlockStep>('pin');
@@ -139,6 +139,8 @@ export default function QuickUnlock() {
 
         if (result.success) {
           setDuressMode(false);
+          // Normal-PIN unlock clears the decoy so the next duress unlock re-initialises it.
+          resetDuressBalance();
           if (hasBiometricHardware && isBiometricEnrolled) {
             setStep('biometric');
             triggerBiometricAuth();

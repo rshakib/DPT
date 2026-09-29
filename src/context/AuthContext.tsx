@@ -20,10 +20,12 @@ interface AuthContextType {
   /** True when the session was unlocked with the duress PIN (paper §3.1). */
   isDuressMode: boolean;
   setDuressMode: (v: boolean) => void;
-  /** Decoy wallet balance shown in duress mode (0..L_D), decreases as money is spent. */
+  /** Decoy wallet balance shown in duress mode (0..L_D), persists across duress unlocks. */
   duressBalance: number;
-  initDuressBalance: (realBalance: any) => void;
+  initDuressBalance: (realBalance: any) => Promise<void>;
   adjustDuressBalance: (delta: number) => void;
+  /** Clear the decoy balance (called on a normal-PIN unlock so duress re-initialises). */
+  resetDuressBalance: () => void;
   login: (username: string, pin: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => Promise<void>;
   switchAccount: () => Promise<void>;
@@ -41,14 +43,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isDuressMode, setIsDuressMode] = useState(false);
   const [duressBalance, setDuressBalance] = useState(0);
 
-  // Initialise the duress "decoy" wallet to min(real balance, L_D). It then moves
-  // down/up as the user spends/receives while in duress mode, staying within 0..L_D.
-  const initDuressBalance = React.useCallback((realBalance: any) => {
-    setDuressBalance(Math.min(Number(realBalance || 0), DURESS_LIMIT_DEFAULT));
-  }, []);
-  const adjustDuressBalance = React.useCallback((delta: number) => {
-    setDuressBalance((b) => Math.min(DURESS_LIMIT_DEFAULT, Math.max(0, b + delta)));
-  }, []);
+  // Duress "decoy" wallet. Persisted per user so it stays IDENTICAL across duress
+  // unlocks; it only re-initialises to min(real balance, L_D) after a normal-PIN
+  // unlock (which clears the stored value).
+  const duressBalKey = (u?: string | null) => `niropay_duress_balance_${u || ''}`;
+
+  const initDuressBalance = async (realBalance: any) => {
+    const username = user?.username;
+    if (username) {
+      try {
+        const saved = await SecureStore.getItemAsync(duressBalKey(username));
+        if (saved !== null && saved !== undefined && saved !== '') {
+          setDuressBalance(Number(saved) || 0);
+          return;
+        }
+      } catch {}
+    }
+    const v = Math.min(Number(realBalance || 0), DURESS_LIMIT_DEFAULT);
+    setDuressBalance(v);
+    if (username) {
+      SecureStore.setItemAsync(duressBalKey(username), String(v)).catch(() => {});
+    }
+  };
+
+  const adjustDuressBalance = (delta: number) => {
+    const username = user?.username;
+    setDuressBalance((b) => {
+      const next = Math.min(DURESS_LIMIT_DEFAULT, Math.max(0, b + delta));
+      if (username) {
+        SecureStore.setItemAsync(duressBalKey(username), String(next)).catch(() => {});
+      }
+      return next;
+    });
+  };
+
+  const resetDuressBalance = () => {
+    setDuressBalance(0);
+    const username = user?.username;
+    if (username) {
+      SecureStore.deleteItemAsync(duressBalKey(username)).catch(() => {});
+    }
+  };
 
   // Load session from SecureStore on mount & read SQLite cache
   useEffect(() => {
@@ -216,6 +251,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         duressBalance,
         initDuressBalance,
         adjustDuressBalance,
+        resetDuressBalance,
         login,
         logout,
         switchAccount,
