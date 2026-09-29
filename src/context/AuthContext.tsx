@@ -17,6 +17,9 @@ interface AuthContextType {
   isInitializing: boolean;
   isAuthLoading: boolean;
   isAuthenticated: boolean;
+  /** True when the session was unlocked with the duress PIN (paper §3.1). */
+  isDuressMode: boolean;
+  setDuressMode: (v: boolean) => void;
   login: (username: string, pin: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => Promise<void>;
   switchAccount: () => Promise<void>;
@@ -31,6 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [lastLoggedInUser, setLastLoggedInUser] = useState<string | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isDuressMode, setIsDuressMode] = useState(false);
 
   // Load session from SecureStore on mount & read SQLite cache
   useEffect(() => {
@@ -107,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(result.data.token);
       setUser(canonicalUser);
       setLastLoggedInUser(canonicalUser.username);
+      setIsDuressMode(false);
       setIsAuthLoading(false);
 
       // Trigger initial data sync & start background sync service
@@ -137,6 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUser(null);
     setLastLoggedInUser(null);
+    setIsDuressMode(false);
     setIsAuthLoading(false);
   };
 
@@ -151,6 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setToken(null);
     setUser(null);
+    setIsDuressMode(false);
     setIsAuthLoading(false);
   };
 
@@ -190,6 +197,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isInitializing,
         isAuthLoading,
         isAuthenticated,
+        isDuressMode,
+        setDuressMode: setIsDuressMode,
         login,
         logout,
         switchAccount,

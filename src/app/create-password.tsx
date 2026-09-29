@@ -127,18 +127,23 @@ export default function CreatePassword() {
         return;
       }
 
-      // Generate device P-256 ECDSA key pair (fast & instant)
+      // Generate device P-256 ECDSA key pairs (normal + duress) — fast & instant
       let ecdsaKeyHex = '';
+      let duressKeyHex = '';
       try {
         const ecdsaResult = await generateDeviceECDSAKeyPair();
         if (ecdsaResult.success) {
           ecdsaKeyHex = ecdsaResult.publicKeyHex;
         }
+        const duressResult = await generateDeviceECDSAKeyPair(true);
+        if (duressResult.success) {
+          duressKeyHex = duressResult.publicKeyHex;
+        }
       } catch (keyErr) {
         console.warn('[CREATE-PASSWORD] ECDSA key generation error:', keyErr);
       }
 
-      // Register with device ECDSA public key enrolled
+      // Register with both device ECDSA public keys enrolled (normal + duress)
       const result = await api.register(
         username,
         password,
@@ -148,6 +153,7 @@ export default function CreatePassword() {
           fullName: fullName || undefined,
           biometricEnrolled: true,
           ecdsaPublicKey: ecdsaKeyHex || undefined,
+          ecdsaPublicKeyDuress: duressKeyHex || undefined,
         }
       );
 

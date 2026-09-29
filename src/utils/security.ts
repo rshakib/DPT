@@ -31,6 +31,95 @@ export async function saveLocalPinHash(username: string, pin: string): Promise<v
   }
 }
 
+// =========================================================================
+// Duress PIN (paper §3.1) — a distinct local credential that selects the
+// separate duress signing key. Never sent to the server.
+// =========================================================================
+
+const DURESS_PIN_HASH_PREFIX = 'niropay_duress_pin_hash_';
+export const DURESS_LIMIT_DEFAULT = 500;
+
+/** Store the duress PIN hash (hardware-isolated salted SHA-256). */
+export async function saveDuressPinHash(username: string, pin: string): Promise<boolean> {
+  if (!username || !pin) return false;
+  try {
+    const cleanUsername = username.trim().toLowerCase();
+    const hash = await computePinHash(cleanUsername, pin);
+    await SecureStore.setItemAsync(`${DURESS_PIN_HASH_PREFIX}${cleanUsername}`, hash);
+    return true;
+  } catch (error) {
+    console.warn('[SECURITY] Failed to save duress PIN hash:', error);
+    return false;
+  }
+}
+
+/** True when a duress PIN has been configured for this user. */
+export async function hasDuressPin(username: string): Promise<boolean> {
+  if (!username) return false;
+  try {
+    const cleanUsername = username.trim().toLowerCase();
+    return !!(await SecureStore.getItemAsync(`${DURESS_PIN_HASH_PREFIX}${cleanUsername}`));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Verify an entered PIN against the stored duress hash. This is a LOCAL-only check
+ * (the duress PIN is never the account password and is never sent to the server).
+ */
+export async function verifyDuressPin(username: string, pin: string): Promise<boolean> {
+  if (!username || !pin) return false;
+  try {
+    const cleanUsername = username.trim().toLowerCase();
+    const stored = await SecureStore.getItemAsync(`${DURESS_PIN_HASH_PREFIX}${cleanUsername}`);
+    if (!stored) return false;
+    const computed = await computePinHash(cleanUsername, pin);
+    return computed === stored;
+  } catch (error) {
+    console.warn('[SECURITY] Error verifying duress PIN:', error);
+    return false;
+  }
+}
+
+export async function clearDuressPinHash(username: string): Promise<void> {
+  if (!username) return;
+  try {
+    const cleanUsername = username.trim().toLowerCase();
+    await SecureStore.deleteItemAsync(`${DURESS_PIN_HASH_PREFIX}${cleanUsername}`);
+  } catch (error) {
+    console.warn('[SECURITY] Failed to clear duress PIN hash:', error);
+  }
+}
+
+// Conservative client-side counter against L_D for offline-created duress envelopes
+// (paper §4.1). The server re-checks authoritatively at commit time.
+const DURESS_SPENT_PREFIX = 'niropay_duress_spent_';
+
+export async function getDuressSpent(username: string, limit: number = DURESS_LIMIT_DEFAULT): Promise<number> {
+  if (!username) return 0;
+  try {
+    const raw = await SecureStore.getItemAsync(`${DURESS_SPENT_PREFIX}${username.trim().toLowerCase()}`);
+    return raw ? Number(raw) || 0 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Returns the new cumulative duress spend after adding `amount`. */
+export async function addDuressSpent(username: string, amount: number): Promise<number> {
+  if (!username) return 0;
+  try {
+    const key = `${DURESS_SPENT_PREFIX}${username.trim().toLowerCase()}`;
+    const raw = await SecureStore.getItemAsync(key);
+    const next = (raw ? Number(raw) || 0 : 0) + amount;
+    await SecureStore.setItemAsync(key, String(next));
+    return next;
+  } catch {
+    return 0;
+  }
+}
+
 const PIN_ATTEMPTS_PREFIX = 'niropay_pin_attempts_';
 const PIN_LOCKOUT_PREFIX = 'niropay_pin_lockout_';
 const MAX_FAILED_ATTEMPTS = 3;

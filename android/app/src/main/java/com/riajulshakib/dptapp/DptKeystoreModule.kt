@@ -70,6 +70,37 @@ class DptKeystoreModule(reactContext: ReactApplicationContext) :
      * Generate (or return) a hardware-backed P-256 ECDSA key; resolves with the
      * 65-byte uncompressed public key hex (04 || X || Y).
      */
+    private fun buildSpec(alias: String, requireBiometric: Boolean, strongBox: Boolean): KeyGenParameterSpec {
+        val builder = KeyGenParameterSpec.Builder(
+            alias,
+            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
+        )
+            .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+            .setDigests(KeyProperties.DIGEST_SHA256)
+
+        if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // Request a dedicated secure element; falls back to TEE if unavailable.
+            builder.setIsStrongBoxBacked(true)
+        }
+        if (requireBiometric) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                builder.setUserAuthenticationRequired(true)
+                builder.setUserAuthenticationParameters(
+                    300,
+                    KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                builder.setUserAuthenticationRequired(true)
+                @Suppress("DEPRECATION")
+                builder.setUserAuthenticationValidityDurationSeconds(300)
+            }
+        } else {
+            builder.setUserAuthenticationRequired(false)
+        }
+        return builder.build()
+    }
+
     @ReactMethod
     fun generateKey(alias: String, requireBiometric: Boolean, promise: Promise) {
         try {
@@ -80,35 +111,37 @@ class DptKeystoreModule(reactContext: ReactApplicationContext) :
             }
 
             val kpg = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
-            val builder = KeyGenParameterSpec.Builder(
-                alias,
-                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
-            )
-                .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                .setDigests(KeyProperties.DIGEST_SHA256)
-
-            if (requireBiometric) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    builder.setUserAuthenticationRequired(true)
-                    builder.setUserAuthenticationParameters(
-                        300,
-                        KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    builder.setUserAuthenticationRequired(true)
-                    @Suppress("DEPRECATION")
-                    builder.setUserAuthenticationValidityDurationSeconds(300)
-                }
-            } else {
-                builder.setUserAuthenticationRequired(false)
+            try {
+                // Prefer StrongBox (paper Table 1), fall back to TEE-backed Keystore.
+                kpg.initialize(buildSpec(alias, requireBiometric, true))
+                kpg.generateKeyPair()
+            } catch (strongBoxErr: Exception) {
+                kpg.initialize(buildSpec(alias, requireBiometric, false))
+                kpg.generateKeyPair()
             }
-
-            kpg.initialize(builder.build())
-            kpg.generateKeyPair()
             promise.resolve(publicKeyHex(alias))
         } catch (e: Exception) {
             promise.reject("keygen_failed", e)
+        }
+    }
+
+    /** True when the device key for [alias] lives inside secure hardware (TEE/StrongBox). */
+    @ReactMethod
+    fun isHardwareBacked(alias: String, promise: Promise) {
+        try {
+            val entry = keyStore().getEntry(alias, null) as? KeyStore.PrivateKeyEntry
+            if (entry == null) {
+                promise.resolve(false)
+                return
+            }
+            val kf = java.security.KeyFactory.getInstance(entry.privateKey.algorithm, "AndroidKeyStore")
+            val keyInfo = kf.getKeySpec(
+                entry.privateKey,
+                android.security.keystore.KeyInfo::class.java
+            ) as android.security.keystore.KeyInfo
+            promise.resolve(keyInfo.isInsideSecureHardware)
+        } catch (e: Exception) {
+            promise.resolve(false)
         }
     }
 

@@ -19,7 +19,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import { useAppLock } from '../context/AppLockContext';
-import { verifyPinLocally, getPinLockoutStatus } from '../utils/security';
+import { verifyPinLocally, getPinLockoutStatus, verifyDuressPin } from '../utils/security';
 import { LogoMark } from '../components/Logo';
 
 const { width } = Dimensions.get('window');
@@ -35,7 +35,7 @@ export default function QuickUnlock() {
   const { language, toggleLanguage } = useLanguage();
   const t = translations[language];
 
-  const { user, lastLoggedInUser, logout, switchAccount } = useAuth();
+  const { user, lastLoggedInUser, logout, switchAccount, setDuressMode } = useAuth();
   const { unlock } = useAppLock();
 
   const [step, setStep] = useState<UnlockStep>('pin');
@@ -114,12 +114,30 @@ export default function QuickUnlock() {
       if (nextPin.length === 5) {
         setIsPinVerifying(true);
         const username = user?.username || lastLoggedInUser || '';
+
+        // Duress check first (paper §3.1): a matching duress PIN selects the duress
+        // key and never touches the server. The attacker sees a normal unlock.
+        const isDuress = await verifyDuressPin(username, nextPin);
+        if (isDuress) {
+          if (!isMounted.current) return;
+          setIsPinVerifying(false);
+          setDuressMode(true);
+          if (hasBiometricHardware && isBiometricEnrolled) {
+            setStep('biometric');
+            triggerBiometricAuth();
+          } else {
+            unlock();
+          }
+          return;
+        }
+
         const result = await verifyPinLocally(username, nextPin);
 
         if (!isMounted.current) return;
         setIsPinVerifying(false);
 
         if (result.success) {
+          setDuressMode(false);
           if (hasBiometricHardware && isBiometricEnrolled) {
             setStep('biometric');
             triggerBiometricAuth();

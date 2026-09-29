@@ -39,9 +39,19 @@ if (typeof _globalCrypto.crypto.getRandomValues !== 'function') {
 // Absent on iOS/web or builds without the module -> software fallback is used.
 const { DptKeystoreModule } = NativeModules;
 const DEVICE_KEYSTORE_ALIAS = 'dpt_device_ecdsa_keystore_v1';
+const DEVICE_KEYSTORE_ALIAS_DURESS = 'dpt_device_ecdsa_keystore_duress_v1';
 
 const DEVICE_ECDSA_PRIVATE_KEY_ALIAS = 'dpt_device_ecdsa_private_key';
 const DEVICE_ECDSA_PUBLIC_KEY_ALIAS = 'dpt_device_ecdsa_public_key';
+const DEVICE_ECDSA_DURESS_PRIVATE_ALIAS = 'dpt_device_ecdsa_duress_private_key';
+const DEVICE_ECDSA_DURESS_PUBLIC_ALIAS = 'dpt_device_ecdsa_duress_public_key';
+
+// Which keystore/software aliases to use for the normal vs duress signing key.
+function keyAliases(duress: boolean) {
+  return duress
+    ? { ks: DEVICE_KEYSTORE_ALIAS_DURESS, priv: DEVICE_ECDSA_DURESS_PRIVATE_ALIAS, pub: DEVICE_ECDSA_DURESS_PUBLIC_ALIAS }
+    : { ks: DEVICE_KEYSTORE_ALIAS, priv: DEVICE_ECDSA_PRIVATE_KEY_ALIAS, pub: DEVICE_ECDSA_PUBLIC_KEY_ALIAS };
+}
 
 // Helper: base64-encode raw bytes for the native sign() bridge (standard alphabet).
 const _B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -90,18 +100,19 @@ export interface DeviceKeyResult {
 }
 
 /** Software fallback: generate a NIST P-256 ECDSA key pair in SecureStore. */
-async function generateSoftwareDeviceKey(): Promise<DeviceKeyResult> {
+async function generateSoftwareDeviceKey(duress = false): Promise<DeviceKeyResult> {
   try {
+    const a = keyAliases(duress);
     const keyPair = p256.keygen();
     const privHex = bytesToHex(keyPair.secretKey);
     // 65-byte uncompressed public key: 0x04 || X || Y
     const pubUncompressed = p256.getPublicKey(keyPair.secretKey, false);
     const pubHex = bytesToHex(pubUncompressed);
 
-    await SecureStore.setItemAsync(DEVICE_ECDSA_PRIVATE_KEY_ALIAS, privHex);
-    await SecureStore.setItemAsync(DEVICE_ECDSA_PUBLIC_KEY_ALIAS, pubHex);
+    await SecureStore.setItemAsync(a.priv, privHex);
+    await SecureStore.setItemAsync(a.pub, pubHex);
 
-    console.log('[CRYPTO] Generated & saved software device P-256 ECDSA key pair');
+    console.log(`[CRYPTO] Generated & saved software device P-256 ECDSA key pair (${duress ? 'duress' : 'normal'})`);
     return { publicKeyHex: pubHex, success: true };
   } catch (error) {
     console.warn('[CRYPTO] Failed to generate device ECDSA key pair:', error);
@@ -117,20 +128,21 @@ async function generateSoftwareDeviceKey(): Promise<DeviceKeyResult> {
  * module is unavailable (iOS/web/build without the module) so the app keeps working.
  * The returned public key is sent to the server at registration.
  */
-export async function generateDeviceECDSAKeyPair(): Promise<DeviceKeyResult> {
+export async function generateDeviceECDSAKeyPair(duress = false): Promise<DeviceKeyResult> {
+  const a = keyAliases(duress);
   if (DptKeystoreModule?.generateKey) {
     try {
-      const pubHex = await DptKeystoreModule.generateKey(DEVICE_KEYSTORE_ALIAS, true);
+      const pubHex = await DptKeystoreModule.generateKey(a.ks, true);
       if (pubHex && typeof pubHex === 'string') {
-        await SecureStore.setItemAsync(DEVICE_ECDSA_PUBLIC_KEY_ALIAS, pubHex).catch(() => {});
-        console.log('[CRYPTO] Enrolled hardware (Android Keystore) device key');
+        await SecureStore.setItemAsync(a.pub, pubHex).catch(() => {});
+        console.log(`[CRYPTO] Enrolled hardware (Android Keystore) ${duress ? 'duress ' : ''}device key`);
         return { publicKeyHex: pubHex, success: true };
       }
     } catch (e) {
       console.warn('[CRYPTO] Keystore enrollment unavailable, using software key:', e);
     }
   }
-  return generateSoftwareDeviceKey();
+  return generateSoftwareDeviceKey(duress);
 }
 
 /**
@@ -140,16 +152,17 @@ export async function generateDeviceECDSAKeyPair(): Promise<DeviceKeyResult> {
  *   different key, which would break server verification.
  * - Software path: noble P-256 ECDSA over SHA-256.
  */
-export async function signWithDeviceKey(data: Uint8Array): Promise<string> {
+export async function signWithDeviceKey(data: Uint8Array, duress = false): Promise<string> {
+  const a = keyAliases(duress);
   if (DptKeystoreModule?.hasKey) {
     let has = false;
     try {
-      has = await DptKeystoreModule.hasKey(DEVICE_KEYSTORE_ALIAS);
+      has = await DptKeystoreModule.hasKey(a.ks);
     } catch {
       has = false;
     }
     if (has) {
-      const sigHex = await DptKeystoreModule.sign(DEVICE_KEYSTORE_ALIAS, bytesToBase64(data));
+      const sigHex = await DptKeystoreModule.sign(a.ks, bytesToBase64(data));
       if (!sigHex || typeof sigHex !== 'string') {
         throw new Error('Keystore signing returned no signature');
       }
@@ -157,10 +170,10 @@ export async function signWithDeviceKey(data: Uint8Array): Promise<string> {
     }
   }
 
-  let privHex = await getStoredDeviceECDSAPrivateKey();
+  let privHex = await getStoredDeviceECDSAPrivateKey(duress);
   if (!privHex) {
-    await generateSoftwareDeviceKey();
-    privHex = await getStoredDeviceECDSAPrivateKey();
+    await generateSoftwareDeviceKey(duress);
+    privHex = await getStoredDeviceECDSAPrivateKey(duress);
   }
   if (!privHex) throw new Error('Unable to access device signing key');
   return bytesToHex(p256.sign(data, hexToBytes(privHex)));
@@ -169,9 +182,9 @@ export async function signWithDeviceKey(data: Uint8Array): Promise<string> {
 /**
  * Retrieve the enrolled device ECDSA public key hex (65 bytes uncompressed).
  */
-export async function getStoredDeviceECDSAPublicKey(): Promise<string | null> {
+export async function getStoredDeviceECDSAPublicKey(duress = false): Promise<string | null> {
   try {
-    return await SecureStore.getItemAsync(DEVICE_ECDSA_PUBLIC_KEY_ALIAS);
+    return await SecureStore.getItemAsync(keyAliases(duress).pub);
   } catch {
     return null;
   }
@@ -180,9 +193,9 @@ export async function getStoredDeviceECDSAPublicKey(): Promise<string | null> {
 /**
  * Retrieve the enrolled device ECDSA private key hex (32 bytes).
  */
-export async function getStoredDeviceECDSAPrivateKey(): Promise<string | null> {
+export async function getStoredDeviceECDSAPrivateKey(duress = false): Promise<string | null> {
   try {
-    return await SecureStore.getItemAsync(DEVICE_ECDSA_PRIVATE_KEY_ALIAS);
+    return await SecureStore.getItemAsync(keyAliases(duress).priv);
   } catch {
     return null;
   }
@@ -191,11 +204,17 @@ export async function getStoredDeviceECDSAPrivateKey(): Promise<string | null> {
 /**
  * Check if the device has enrolled ECDSA keys.
  */
-export async function hasDeviceECDSAKeys(): Promise<boolean> {
+export async function hasDeviceECDSAKeys(duress = false): Promise<boolean> {
   try {
-    const pub = await SecureStore.getItemAsync(DEVICE_ECDSA_PUBLIC_KEY_ALIAS);
-    const priv = await SecureStore.getItemAsync(DEVICE_ECDSA_PRIVATE_KEY_ALIAS);
-    return !!(pub && priv);
+    const a = keyAliases(duress);
+    const pub = await SecureStore.getItemAsync(a.pub);
+    const priv = await SecureStore.getItemAsync(a.priv);
+    if (pub && priv) return true;
+    // Hardware keystore key: public stored in SecureStore, private is non-exportable.
+    if (duress && DptKeystoreModule?.hasKey) {
+      return !!(await DptKeystoreModule.hasKey(DEVICE_KEYSTORE_ALIAS_DURESS)) || !!pub;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -233,6 +252,8 @@ export interface CreateHTEParams {
   keyId?: string;
   timestamp?: string;
   nonce?: string;
+  /** When true, sign with the duress key (paper §3.1). Envelope format is unchanged. */
+  duress?: boolean;
 }
 
 /**
@@ -260,6 +281,7 @@ export async function createHybridTransactionEnvelope(
       keyId = 'hte-bank-ecdh-v1',
       timestamp = new Date().toISOString(),
       nonce = `n-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      duress = false,
     } = params;
 
     const v = 1;
@@ -277,7 +299,10 @@ export async function createHybridTransactionEnvelope(
 
     // 2. Generate fresh ephemeral P-256 ECDH pair (esk, ePK)
     const ephemeralKey = p256.keygen();
-    const ePK_bytes = p256.getPublicKey(ephemeralKey.secretKey, false); // 65 bytes uncompressed
+    // Compressed SEC1 point (33 bytes: 0x02/0x03 || X) — paper §5's ~125-byte overhead
+    // assumes compressed encoding. The server accepts compressed or uncompressed
+    // (cryptography from_encoded_point), so both encode the same point.
+    const ePK_bytes = p256.getPublicKey(ephemeralKey.secretKey, true); // 33 bytes compressed
     const ePK_hex = bytesToHex(ePK_bytes);
 
     // 3. Compute shared secret Z = ECDH(esk, PK_B^dh)
@@ -334,7 +359,8 @@ export async function createHybridTransactionEnvelope(
     canonicalData.set(AAD_bytes, offset);
 
     // Hardware (Keystore) signature when available; otherwise software noble P-256.
-    const sigHex = await signWithDeviceKey(canonicalData);
+    // The duress flag selects the signing key — the envelope bytes are identical.
+    const sigHex = await signWithDeviceKey(canonicalData, duress);
 
     return {
       v,

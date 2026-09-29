@@ -6,6 +6,7 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 // Paper §4.1: queued envelopes are kept in platform secure storage (keystore-backed),
 // never as plaintext in SQLite. Telemetry rows in SQLite hold only metadata.
 const PENDING_ENV_PREFIX = 'dpt_pending_env_';
+const PENDING_META_PREFIX = 'dpt_pending_meta_';
 const QUEUE_SEQ_PREFIX = 'dpt_queue_seq_';
 
 /** Exponential backoff schedule for deferred submission (paper §4.1). */
@@ -563,7 +564,10 @@ export async function savePendingOfflineTransaction(
       }
     }
 
-    const payload = {
+    // Sensitive fields (receiver, amount) go to keystore-backed storage, never
+    // plaintext SQLite (paper §4.1 local queue protection). SQLite keeps only the
+    // routing/retry metadata needed for ordering and settlement.
+    const meta = {
       id: reference,
       username,
       receiver,
@@ -576,10 +580,27 @@ export async function savePendingOfflineTransaction(
       nextAttemptAt: 0,
       hasEnvelope: !!envelopeJson,
     };
+    try {
+      await SecureStore.setItemAsync(`${PENDING_META_PREFIX}${reference}`, JSON.stringify(meta));
+    } catch (e) {
+      console.warn('Failed to secure-store pending queue metadata:', e);
+    }
+
+    const rowMeta = {
+      id: reference,
+      username,
+      type,
+      reference,
+      createdAt,
+      retryCount,
+      seq,
+      nextAttemptAt: 0,
+      hasEnvelope: !!envelopeJson,
+    };
 
     await db.runAsync(
       `INSERT OR REPLACE INTO pending_offline_transactions (id, username, receiver, amount, type, created_at, created_at_epoch, status, raw_json, seq, next_attempt_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [reference, username, receiver, amount, type, createdAt, createdAtEpoch, 'pending', JSON.stringify(payload), seq, 0]
+      [reference, username, '', 0, type, createdAt, createdAtEpoch, 'pending', JSON.stringify(rowMeta), seq, 0]
     );
   } catch (error) {
     console.warn('Failed to save pending offline transaction:', error);
@@ -606,6 +627,14 @@ export async function updatePendingOfflineTransactionRetry(id: string, retryCoun
         'UPDATE pending_offline_transactions SET raw_json = ?, next_attempt_at = ? WHERE id = ?',
         [JSON.stringify(parsed), nextAttemptAt, id]
       );
+      // Keep the keystore-backed meta in sync (nextAttemptAt/retryCount live there).
+      try {
+        const metaRaw = await SecureStore.getItemAsync(`${PENDING_META_PREFIX}${id}`);
+        const meta = metaRaw ? JSON.parse(metaRaw) : {};
+        meta.retryCount = retryCount;
+        meta.nextAttemptAt = nextAttemptAt;
+        await SecureStore.setItemAsync(`${PENDING_META_PREFIX}${id}`, JSON.stringify(meta));
+      } catch (e) {}
     }
   } catch (error) {
     console.warn('Failed to update pending offline transaction retry:', error);
@@ -629,6 +658,13 @@ export async function getPendingOfflineTransactions(username: string): Promise<a
         parsed = JSON.parse(r.raw_json);
       } catch {
         parsed = {};
+      }
+      // Rehydrate sensitive fields (receiver/amount) from keystore-backed storage.
+      const metaRaw = await SecureStore.getItemAsync(`${PENDING_META_PREFIX}${r.id}`).catch(() => null);
+      if (metaRaw) {
+        try {
+          Object.assign(parsed, JSON.parse(metaRaw));
+        } catch {}
       }
       // Rehydrate the signed envelope P from keystore-backed storage.
       const envRaw = await SecureStore.getItemAsync(`${PENDING_ENV_PREFIX}${r.id}`).catch(() => null);
@@ -683,6 +719,7 @@ export async function removePendingOfflineTransaction(id: string): Promise<void>
     const db = await getDb();
     await db.runAsync('DELETE FROM pending_offline_transactions WHERE id = ?', [id]);
     await SecureStore.deleteItemAsync(`${PENDING_ENV_PREFIX}${id}`).catch(() => {});
+    await SecureStore.deleteItemAsync(`${PENDING_META_PREFIX}${id}`).catch(() => {});
   } catch (error) {
     console.warn('Failed to delete pending offline transaction:', error);
   }

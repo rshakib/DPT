@@ -23,6 +23,7 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import * as db from '../services/db';
 import { syncService } from '../services/sync';
+import { addDuressSpent } from '../utils/security';
 
 const { width } = Dimensions.get('window');
 
@@ -33,7 +34,7 @@ export default function TransactionProcessing() {
   const { theme } = useAppTheme();
   const { language } = useLanguage();
   const t = translations[language];
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, isDuressMode } = useAuth();
 
   // Retrieve incoming transaction details
   const params = useLocalSearchParams();
@@ -156,6 +157,7 @@ export default function TransactionProcessing() {
         if (keyInfo && api.isOfflineEnvelopeAllowed(keyInfo)) {
           const { createHybridTransactionEnvelope } = require('../services/crypto');
           envelope = await createHybridTransactionEnvelope({
+            duress: isDuressMode,
             sender: user.username,
             receiver: cleanedReceiver,
             amount: cleanedAmount,
@@ -264,6 +266,11 @@ export default function TransactionProcessing() {
             retryCount: 0,
             envelope,
           });
+
+          // Conservative local L_D counter for offline duress envelopes (paper §4.1).
+          if (isDuressMode) {
+            await addDuressSpent(user.username, cleanedAmount);
+          }
 
           // Paper §4.1: no offline settlement — do NOT deduct the balance locally.
           // The queued transaction is `pending`; the server settles it on reconnect

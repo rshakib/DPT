@@ -107,7 +107,10 @@ export function isServerKeyFresh(info: ServerKeyInfo | null): boolean {
  * re-synchronize online and must NOT construct further envelopes offline.
  */
 export function isOfflineEnvelopeAllowed(info: ServerKeyInfo | null): boolean {
-  return !!info && !!info.publicKey && !info.forceOnlineResync;
+  // Paper §4.1: envelope creation requires a *valid* cached key — neither revoked
+  // nor past its local cache lifetime τ_cache. Once τ_cache elapses the client must
+  // refresh the record online before constructing further envelopes.
+  return !!info && !!info.publicKey && !info.forceOnlineResync && isServerKeyFresh(info);
 }
 
 /**
@@ -234,6 +237,7 @@ export async function register(
   extraFields?: {
     rsaPublicKey?: string;
     ecdsaPublicKey?: string;
+    ecdsaPublicKeyDuress?: string;
     fullName?: string;
     mobile?: string;
     email?: string;
@@ -253,6 +257,10 @@ export async function register(
       payload.ecdsaPublicKey = extraFields.ecdsaPublicKey;
       payload.ecdsa_public_key = extraFields.ecdsaPublicKey;
       if (!payload.rsaPublicKey) payload.rsaPublicKey = extraFields.ecdsaPublicKey;
+    }
+    if (extraFields?.ecdsaPublicKeyDuress) {
+      payload.ecdsaPublicKeyDuress = extraFields.ecdsaPublicKeyDuress;
+      payload.ecdsa_public_key_duress = extraFields.ecdsaPublicKeyDuress;
     }
     if (extraFields?.fullName) payload.fullName = extraFields.fullName;
     if (extraFields?.mobile) payload.mobile = extraFields.mobile;

@@ -8,6 +8,7 @@ import {
   Animated,
   Dimensions,
   Alert,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +18,8 @@ import { Header } from '../components/Header';
 import { useAppTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
+import { useAuth } from '../context/AuthContext';
+import { saveDuressPinHash, hasDuressPin, DURESS_LIMIT_DEFAULT } from '../utils/security';
 
 const { width } = Dimensions.get('window');
 
@@ -96,6 +99,33 @@ export default function SecurityCenter() {
     );
   };
 
+  const { user } = useAuth();
+  const [duressPin, setDuressPin] = useState('');
+  const [duressConfigured, setDuressConfigured] = useState(false);
+
+  useEffect(() => {
+    if (user?.username) {
+      hasDuressPin(user.username).then(setDuressConfigured);
+    }
+  }, [user?.username]);
+
+  const handleSaveDuress = async () => {
+    if (!user?.username) return;
+    if (!/^\d{5}$/.test(duressPin)) {
+      Alert.alert(
+        language === 'en' ? 'Duress PIN' : 'ডিউরেস পিন',
+        language === 'en' ? 'Enter exactly 5 digits.' : 'ঠিক ৫ ডিজিট লিখুন।'
+      );
+      return;
+    }
+    const ok = await saveDuressPinHash(user.username, duressPin);
+    setDuressPin('');
+    if (ok) {
+      setDuressConfigured(true);
+      triggerToast(language === 'en' ? 'Duress PIN saved' : 'ডিউরেস পিন সংরক্ষিত');
+    }
+  };
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
       <Header title={t.securityCenterTitle || "Security Center"} />
@@ -170,6 +200,47 @@ export default function SecurityCenter() {
           <Text style={[styles.sectionSubtitle, { color: theme.textSecondary }]}>
             {t.manageAuthOptions || 'Manage authorization options'}
           </Text>
+        </View>
+
+        {/* Duress PIN (paper §3.1) — unlocks a restricted profile via a separate key */}
+        <View style={[styles.settingsCard, { backgroundColor: theme.cardBg, borderColor: theme.border, padding: Spacing.lg, marginBottom: Spacing.lg }]}>
+          <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 4 }]}>
+            {language === 'en' ? 'Duress PIN' : 'ডিউরেস পিন'}
+          </Text>
+          <Text style={[styles.sectionSubtitle, { color: theme.textSecondary, marginBottom: Spacing.sm }]}>
+            {duressConfigured
+              ? (language === 'en' ? `Configured · spend limit ৳${DURESS_LIMIT_DEFAULT}` : `সেট করা হয়েছে · সীমা ৳${DURESS_LIMIT_DEFAULT}`)
+              : (language === 'en'
+                  ? `Unlocks a restricted profile (৳${DURESS_LIMIT_DEFAULT}) with a separate signing key.`
+                  : `আলাদা সাইনিং কী দিয়ে সীমিত প্রোফাইল (৳${DURESS_LIMIT_DEFAULT}) আনলক করে।`)}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+            <TextInput
+              style={{
+                flex: 1,
+                borderWidth: 1,
+                borderColor: theme.border,
+                borderRadius: 12,
+                paddingHorizontal: Spacing.md,
+                paddingVertical: 12,
+                color: theme.text,
+              }}
+              value={duressPin}
+              onChangeText={(v) => setDuressPin(v.replace(/[^0-9]/g, '').slice(0, 5))}
+              placeholder={language === 'en' ? 'Enter 5-digit duress PIN' : '৫ ডিজিটের ডিউরেস পিন'}
+              placeholderTextColor={theme.textSecondary}
+              keyboardType="number-pad"
+              secureTextEntry
+              maxLength={5}
+            />
+            <TouchableOpacity
+              style={{ backgroundColor: theme.primary, borderRadius: 12, paddingHorizontal: Spacing.lg, paddingVertical: 12 }}
+              onPress={handleSaveDuress}
+              activeOpacity={0.8}
+            >
+              <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>{t.save || 'Save'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Security Settings Options Card */}
