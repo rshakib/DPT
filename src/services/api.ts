@@ -356,10 +356,14 @@ export async function transfer(
       }
       return { success: true, data: json };
     } else {
-      let message = json.error || json.message || 'Transfer failed';
-      if (response.status === 400) message = json.error || 'Invalid transfer parameters';
-      if (response.status === 403) message = json.error || 'Forbidden transaction';
-      return { success: false, message, status: response.status };
+      // Prefer the server's real message; only use a generic fallback when absent.
+      const serverMsg = json.error || json.message;
+      const fallback =
+        response.status === 400 ? 'Invalid transfer parameters'
+        : response.status === 403 ? 'Forbidden transaction'
+        : response.status === 409 ? 'Transaction already being processed'
+        : 'Transfer failed';
+      return { success: false, message: serverMsg || fallback, status: response.status };
     }
   } catch (error: any) {
     return { success: false, message: error.message || 'Network connection failed' };
