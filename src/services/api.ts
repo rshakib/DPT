@@ -366,44 +366,6 @@ export async function transfer(
 }
 
 /**
- * Executes a secure transfer using the paper's Hybrid Transaction Envelope (HTE):
- * Ephemeral P-256 ECDH + HKDF-SHA256 + AES-256-GCM + Biometric-Authorized ECDSA.
- * Falls back to standard transfer if the server public key is unavailable.
- */
-export async function transferWithHTE(
-  username: string,
-  receiver: string,
-  amount: number,
-  txid?: string
-): Promise<ApiResult<any>> {
-  try {
-    const finalTxId = txid || `TX-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
-    const keyInfo = await getServerKeyInfo();
-
-    if (keyInfo && keyInfo.publicKey) {
-      const { createHybridTransactionEnvelope } = require('./crypto');
-      const envelope = await createHybridTransactionEnvelope({
-        sender: username,
-        receiver,
-        amount,
-        txid: finalTxId,
-        serverPublicKeyHex: keyInfo.publicKey,
-        keyId: keyInfo.keyId,
-      });
-
-      if (envelope) {
-        return await transfer(username, receiver, amount, finalTxId, envelope);
-      }
-    }
-
-    // Fallback to standard transfer
-    return await transfer(username, receiver, amount, finalTxId);
-  } catch (err: any) {
-    return { success: false, message: err?.message || 'Transfer failed' };
-  }
-}
-
-/**
  * Receiver-side claim of a sender-signed offline envelope P (paper §4.1).
  * The receiver relays the SAME immutable envelope; the server verifies the
  * sender's signature and settles atomically — final settlement is receiver-authoritative.
