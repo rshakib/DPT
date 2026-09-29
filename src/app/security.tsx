@@ -103,6 +103,7 @@ export default function SecurityCenter() {
   const [duressPin, setDuressPin] = useState('');
   const [duressConfigured, setDuressConfigured] = useState(false);
   const [showDuressInput, setShowDuressInput] = useState(false);
+  const [duressJustSaved, setDuressJustSaved] = useState(false);
 
   useEffect(() => {
     if (user?.username) {
@@ -123,6 +124,7 @@ export default function SecurityCenter() {
     setDuressPin('');
     if (ok) {
       setDuressConfigured(true);
+      setDuressJustSaved(true);
       setShowDuressInput(false);
       triggerToast(language === 'en' ? 'Duress PIN saved' : 'ডিউরেস পিন সংরক্ষিত');
     }
@@ -215,8 +217,9 @@ export default function SecurityCenter() {
               : `আলাদা সাইনিং কী দিয়ে সীমিত প্রোফাইল (৳${DURESS_LIMIT_DEFAULT}) আনলক করে।`}
           </Text>
 
-          {/* In duress mode the fact that a duress PIN exists is hidden (show "not set"). */}
-          {(duressConfigured && !isDuressMode && !showDuressInput) ? (
+          {/* In duress mode a pre-existing duress PIN is hidden ("not set"), UNLESS the
+              user just saved one in this duress session (then show "saved"). */}
+          {(duressConfigured && (!isDuressMode || duressJustSaved) && !showDuressInput) ? (
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs }}>
                 <Ionicons name="checkmark-circle" size={18} color={theme.success} />
