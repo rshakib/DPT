@@ -73,7 +73,21 @@ function isLocalOnlyId(id: unknown): boolean {
   return LOCAL_ONLY_ID_PREFIXES.some((prefix) => str.startsWith(prefix));
 }
 
+// Only these local placeholders are dropped once the server returns the canonical
+// row. Outgoing queue rows (OFF-) are excluded on purpose: they are removed by the
+// sync flush on settlement, and hiding them here could mask a genuinely new
+// transfer of the same amount to the same receiver.
+const SUPERSEDABLE_LOCAL_PREFIXES = ['OFF-REC-', 'LOCAL-RECV-'];
+
+function isSupersedableLocalId(id: unknown): boolean {
+  if (id === null || id === undefined) return false;
+  const str = String(id);
+  return SUPERSEDABLE_LOCAL_PREFIXES.some((prefix) => str.startsWith(prefix));
+}
+
 const LOCAL_ONLY_WHERE = LOCAL_ONLY_ID_PREFIXES.map((p) => `id LIKE '${p}%'`).join(' OR ');
+
+const SUPERSEDE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function txSignature(tx: any): string {
   const amount = Number(tx.amount || 0).toFixed(2);
@@ -83,27 +97,28 @@ function txSignature(tx: any): string {
 }
 
 /**
- * Collapse duplicate rows for the SAME transfer. A transfer can be recorded more
- * than once on-device (e.g. an NFC handoff row plus a QR offline-receipt claim row)
- * and can also later arrive from the server as the canonical row. We keep ONE row
- * per (sender > receiver @ amount) signature: the server row is preferred, and
- * among local rows the first (newest, since rows are ordered epoch-DESC) is kept.
+ * Hide on-device received-credit placeholders (offline NFC / QR receipts) once the
+ * server has returned the canonical transaction for the same transfer. Without
+ * this, the placeholder and its server counterpart both appear in Recent Activity
+ * / History as duplicates.
  */
 function dropSupersededLocalRows(rows: any[]): any[] {
-  if (!rows.some((r) => isLocalOnlyId(r.id))) return rows;
+  const candidates = rows.filter((r) => isSupersedableLocalId(r.id));
+  if (candidates.length === 0) return rows;
 
-  const serverSigs = new Set(
-    rows.filter((r) => !isLocalOnlyId(r.id)).map((r) => txSignature(r))
-  );
-  const keptLocalSigs = new Set<string>();
+  const serverRows = rows.filter((r) => !isLocalOnlyId(r.id));
+  if (serverRows.length === 0) return rows;
 
   return rows.filter((row) => {
-    if (!isLocalOnlyId(row.id)) return true; // canonical server rows are always kept
-    const sig = txSignature(row);
-    if (serverSigs.has(sig)) return false;    // server already holds the canonical row
-    if (keptLocalSigs.has(sig)) return false; // same transfer already recorded locally
-    keptLocalSigs.add(sig);
-    return true;
+    if (!isSupersedableLocalId(row.id)) return true;
+
+    return !serverRows.some((server) => {
+      if (txSignature(server) !== txSignature(row)) return false;
+      const rowTime = toEpoch(row.created_at || row.createdAt || row.timestamp);
+      const serverTime = toEpoch(server.created_at || server.createdAt || server.timestamp);
+      if (rowTime === 0 || serverTime === 0) return true;
+      return Math.abs(serverTime - rowTime) <= SUPERSEDE_WINDOW_MS;
+    });
   });
 }
 
