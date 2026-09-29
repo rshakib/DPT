@@ -166,12 +166,58 @@ class SyncService {
       // Track which OFF- IDs we successfully settle so we can clean them up after merge.
       const settledOfflineIds: string[] = [];
 
-      // 0. Flush any pending offline transactions to server
+      // 0. Integrity check: detect gaps/corruption in the local queue seq_i (paper §4.1)
+      const integrity = await db.checkQueueIntegrity(username);
+      if (!integrity.ok) {
+        console.warn('[SYNC SERVICE] Queue sequence gaps detected:', integrity.gaps);
+      }
+
+      // Flush any pending offline transactions to server
       const pendingTx = await db.getPendingOfflineTransactions(username);
       if (pendingTx && pendingTx.length > 0) {
         console.log(`[SYNC SERVICE] Found ${pendingTx.length} pending offline transactions. Flushing to server...`);
         for (const offlineItem of pendingTx) {
           try {
+            // Respect per-item exponential backoff (paper §4.1).
+            if (offlineItem.nextAttemptAt && offlineItem.nextAttemptAt > Date.now()) {
+              continue;
+            }
+
+            // Receiver-side deferred claim: relay the sender-signed envelope P.
+            if (offlineItem.type === 'claim' && offlineItem.envelope) {
+              const claimRes = await api.claimTransfer(offlineItem.envelope);
+              if (claimRes.success) {
+                await db.removePendingOfflineTransaction(offlineItem.id);
+                const claimNotif = {
+                  id: `notif-claim-${Date.now()}`,
+                  title: 'অফলাইন দাবি সফল হয়েছে',
+                  message: `@${offlineItem.receiver} থেকে পাঠানো পেমেন্ট আপনার অ্যাকাউন্টে যোগ হয়েছে।`,
+                  notification_type: 'transfer_success',
+                  created_at: new Date().toISOString(),
+                };
+                await db.mergeCachedNotifications(username, [claimNotif]);
+                hasChanges = true;
+                const claimAlert = {
+                  title: 'অফলাইন দাবি সফল ✅',
+                  message: `@${offlineItem.receiver} থেকে পাঠানো পেমেন্ট যোগ হয়েছে।`,
+                };
+                if (this.reconciliationAlertCallback) {
+                  this.reconciliationAlertCallback(claimAlert);
+                } else {
+                  this.pendingAlerts.push(claimAlert);
+                }
+              } else {
+                const m = (claimRes.message || '').toLowerCase();
+                const net = m.includes('network') || m.includes('fetch') || m.includes('connection failed');
+                // Server rejection is authoritative -> drop; network error -> retry later.
+                if (!net) {
+                  await db.removePendingOfflineTransaction(offlineItem.id);
+                  hasChanges = true;
+                }
+              }
+              continue;
+            }
+
             const transferRes = offlineItem.envelope
               ? await api.transfer(username, offlineItem.receiver, offlineItem.amount, offlineItem.id, offlineItem.envelope)
               : await api.transfer(username, offlineItem.receiver, offlineItem.amount, offlineItem.id);
@@ -222,143 +268,83 @@ class SyncService {
                 continue;
               }
 
-              // Server rejected the transaction (e.g. receiver invalid or error)
-              const isNonRefundable = offlineItem.nonRefundable === true || offlineItem.type === 'qr_payment';
+              // Server rejected the transaction (e.g. receiver invalid or error).
               const currentRetry = (offlineItem.retryCount || 0) + 1;
 
               if (currentRetry < 5) {
-                console.log(`[SYNC SERVICE] Offline transaction ${offlineItem.id} failed attempt ${currentRetry}/5. Will retry next cycle.`);
+                console.log(`[SYNC SERVICE] Offline transaction ${offlineItem.id} failed attempt ${currentRetry}/5. Will retry after backoff.`);
                 await db.updatePendingOfflineTransactionRetry(offlineItem.id, currentRetry);
                 continue;
               }
 
-              // After 5 failed attempts:
-              console.warn(`[SYNC SERVICE] Offline transaction ${offlineItem.id} failed after 5 retries! Finalizing...`);
+              // Retry budget exhausted -> receiver-authoritative rejection + refund.
+              // Paper §4.1 defines no ad-hoc "permanent forfeiture" rule.
+              console.warn(`[SYNC SERVICE] Offline transaction ${offlineItem.id} rejected after 5 retries. Refunding.`);
               await db.removePendingOfflineTransaction(offlineItem.id);
 
-              if (isNonRefundable) {
-                // DO NOT REFUND: The money is permanently cut from sender with no way to return
-                console.warn(`[SYNC SERVICE] Non-refundable transaction ${offlineItem.id}. Funds permanently deducted without refund.`);
+              try {
+                const db2 = await db.getDb();
+                await db2.runAsync('DELETE FROM cached_transactions WHERE id = ?', [offlineItem.id]);
+              } catch (delErr) {
+                console.warn('[SYNC SERVICE] Failed to delete offline tx from cache:', delErr);
+              }
 
-                // Notify bank that transaction failed after 5 retries with funds debited
-                await api.reportFailedTransaction({
-                  username,
-                  receiver: offlineItem.receiver,
+              // REFUND: restore the locally deducted balance
+              try {
+                const cachedUser = await db.getCachedUser(username);
+                if (cachedUser) {
+                  const currentBalance = Number(cachedUser.balance || 0);
+                  const currentSpent = Number(cachedUser.today_spent || cachedUser.todaySpent || 0);
+                  const refundAmount = Number(offlineItem.amount || 0);
+
+                  cachedUser.balance = currentBalance + refundAmount;
+                  cachedUser.today_spent = Math.max(0, currentSpent - refundAmount);
+                  await db.saveCachedUser(username, cachedUser);
+                  console.log(`[SYNC SERVICE] Refunded ৳${refundAmount} to ${username}. New balance: ${cachedUser.balance}`);
+                }
+              } catch (refundErr) {
+                console.warn('[SYNC SERVICE] Failed to refund balance:', refundErr);
+              }
+
+              // Record the FAIL- row
+              try {
+                const failId = offlineItem.id.startsWith('OFF-')
+                  ? offlineItem.id.replace('OFF-', 'FAIL-')
+                  : `FAIL-${offlineItem.id}`;
+                const failedTx = {
+                  id: failId,
+                  sender_username: username,
+                  receiver_username: offlineItem.receiver,
                   amount: offlineItem.amount,
-                  retries: 5,
-                  reference: offlineItem.id,
-                  reason: transferRes.message || 'Failed after 5 retries. Permanent debit.',
-                });
-
-                // Update transaction record in SQLite to permanent failure
-                try {
-                  const failId = offlineItem.id.startsWith('OFF-')
-                    ? offlineItem.id.replace('OFF-', 'FAIL-')
-                    : (offlineItem.id.startsWith('FAIL-') ? offlineItem.id : `FAIL-${offlineItem.id}`);
-                  const failedTx = {
-                    id: failId,
-                    sender_username: username,
-                    receiver_username: offlineItem.receiver,
-                    amount: offlineItem.amount,
-                    type: offlineItem.type || 'qr_payment',
-                    status: 'forfeited_no_refund',
-                    failure_reason: transferRes.message || 'Failed after 5 retries. Bank notified. Non-refundable.',
-                    reference: failId,
-                    created_at: offlineItem.created_at || new Date().toISOString(),
-                  };
-                  await db.mergeCachedTransactions(username, [failedTx]);
-                } catch (txErr) {
-                  console.warn('[SYNC SERVICE] Failed to record permanent failure tx:', txErr);
-                }
-
-                // Inject a non-refundable alert notification in Bangla
-                const failNotif = {
-                  id: `notif-failed-${Date.now()}`,
-                  title: 'QR লেনদেন ব্যর্থ (অফেরতযোগ্য)',
-                  message: `৫ বার চেষ্টার পরেও @${offlineItem.receiver}-এ ৳${offlineItem.amount} পাঠানো যায়নি। টাকা কর্তন করা হয়েছে এবং ব্যাংকে অবহিত করা হয়েছে।`,
-                  notification_type: 'transfer_failed',
-                  created_at: new Date().toISOString(),
+                  type: offlineItem.type || 'transfer',
+                  status: 'failed',
+                  failure_reason: transferRes.message,
+                  reference: failId,
+                  created_at: offlineItem.created_at || new Date().toISOString(),
                 };
-                await db.mergeCachedNotifications(username, [failNotif]);
-                hasChanges = true;
+                await db.mergeCachedTransactions(username, [failedTx]);
+              } catch (txErr) {
+                console.warn('[SYNC SERVICE] Failed to update transaction status:', txErr);
+              }
 
-                const failAlert = {
-                  title: 'QR লেনদেন ব্যর্থ ⚠️',
-                  message: `৫ বার চেষ্টার পরেও @${offlineItem.receiver}-এ ৳${offlineItem.amount} পাঠানো যায়নি। টাকা কর্তন করা হয়েছে এবং পর্যালোচনার জন্য ব্যাংকে পাঠানো হয়েছে।`,
-                };
-                if (this.reconciliationAlertCallback) {
-                  this.reconciliationAlertCallback(failAlert);
-                } else {
-                  this.pendingAlerts.push(failAlert);
-                }
+              const refundNotif = {
+                id: `notif-refund-${Date.now()}`,
+                title: 'অফলাইন লেনদেন ব্যর্থ - টাকা ফেরত',
+                message: `@${offlineItem.receiver}-এ ৳${offlineItem.amount} টাকা পাঠানো যায়নি। আপনার ব্যালেন্স পুনরুদ্ধার করা হয়েছে।`,
+                notification_type: 'security',
+                created_at: new Date().toISOString(),
+              };
+              await db.mergeCachedNotifications(username, [refundNotif]);
+              hasChanges = true;
+
+              const failAlert = {
+                title: 'অফলাইন লেনদেন ব্যর্থ ❌',
+                message: `@${offlineItem.receiver}-এ ৳${offlineItem.amount} টাকা পাঠানো যায়নি। টাকা আপনার অ্যাকাউন্টে ফেরত দেওয়া হয়েছে।`,
+              };
+              if (this.reconciliationAlertCallback) {
+                this.reconciliationAlertCallback(failAlert);
               } else {
-                // Refundable flow for standard P2P transfers
-                try {
-                  const db2 = await db.getDb();
-                  await db2.runAsync('DELETE FROM cached_transactions WHERE id = ?', [offlineItem.id]);
-                } catch (delErr) {
-                  console.warn('[SYNC SERVICE] Failed to delete offline tx from cache:', delErr);
-                }
-
-                // REFUND: Restore the locally deducted balance
-                try {
-                  const cachedUser = await db.getCachedUser(username);
-                  if (cachedUser) {
-                    const currentBalance = Number(cachedUser.balance || 0);
-                    const currentSpent = Number(cachedUser.today_spent || cachedUser.todaySpent || 0);
-                    const refundAmount = Number(offlineItem.amount || 0);
-
-                    cachedUser.balance = currentBalance + refundAmount;
-                    cachedUser.today_spent = Math.max(0, currentSpent - refundAmount);
-                    await db.saveCachedUser(username, cachedUser);
-                    console.log(`[SYNC SERVICE] Refunded ৳${refundAmount} to ${username}. New balance: ${cachedUser.balance}`);
-                  }
-                } catch (refundErr) {
-                  console.warn('[SYNC SERVICE] Failed to refund balance:', refundErr);
-                }
-
-                // Insert the FAIL- record
-                try {
-                  const failId = offlineItem.id.startsWith('OFF-')
-                    ? offlineItem.id.replace('OFF-', 'FAIL-')
-                    : `FAIL-${offlineItem.id}`;
-                  const failedTx = {
-                    id: failId,
-                    sender_username: username,
-                    receiver_username: offlineItem.receiver,
-                    amount: offlineItem.amount,
-                    type: offlineItem.type || 'transfer',
-                    status: 'failed',
-                    failure_reason: transferRes.message,
-                    reference: failId,
-                    created_at: offlineItem.created_at || new Date().toISOString(),
-                  };
-                  await db.mergeCachedTransactions(username, [failedTx]);
-                } catch (txErr) {
-                  console.warn('[SYNC SERVICE] Failed to update transaction status:', txErr);
-                }
-
-                // Inject a notification to inform the user (Bangla)
-                const refundNotif = {
-                  id: `notif-refund-${Date.now()}`,
-                  title: 'অফলাইন লেনদেন ব্যর্থ - টাকা ফেরত',
-                  message: `@${offlineItem.receiver}-এ ৳${offlineItem.amount} টাকা পাঠানো যায়নি। আপনার ব্যালেন্স পুনরুদ্ধার করা হয়েছে।`,
-                  notification_type: 'security',
-                  created_at: new Date().toISOString(),
-                };
-                await db.mergeCachedNotifications(username, [refundNotif]);
-                hasChanges = true;
-
-                // Show popup or store as pending
-                const failAlert = {
-                  title: 'অফলাইন লেনদেন ব্যর্থ ❌',
-                  message: `@${offlineItem.receiver}-এ ৳${offlineItem.amount} টাকা পাঠানো যায়নি। টাকা আপনার অ্যাকাউন্টে ফেরত দেওয়া হয়েছে।`,
-                };
-                if (this.reconciliationAlertCallback) {
-                  this.reconciliationAlertCallback(failAlert);
-                } else {
-                  this.pendingAlerts.push(failAlert);
-                }
+                this.pendingAlerts.push(failAlert);
               }
             }
           } catch (e) {

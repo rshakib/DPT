@@ -23,7 +23,6 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import * as db from '../services/db';
 import { syncService } from '../services/sync';
-import { generateOfflinePaymentReceipt } from '../services/crypto';
 
 const { width } = Dimensions.get('window');
 
@@ -154,7 +153,7 @@ export default function TransactionProcessing() {
       let envelope: any = null;
       try {
         const keyInfo = await api.getServerKeyInfo();
-        if (keyInfo && keyInfo.publicKey) {
+        if (keyInfo && api.isOfflineEnvelopeAllowed(keyInfo)) {
           const { createHybridTransactionEnvelope } = require('../services/crypto');
           envelope = await createHybridTransactionEnvelope({
             sender: user.username,
@@ -255,54 +254,30 @@ export default function TransactionProcessing() {
         // If failure is strictly due to offline network connection, queue offline transaction
         if (isNetworkError) {
           const offlineRef = `OFF-${Math.floor(100000 + Math.random() * 900000)}`;
-          const nonce = `nonce-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-          // Generate cryptographically signed offline receipt for instant 2-way offline credit
-          let offlineReceiptJson = '';
-          try {
-            const receipt = await generateOfflinePaymentReceipt(
-              user.username,
-              cleanedReceiver,
-              cleanedAmount,
-              offlineRef,
-              nonce
-            );
-            offlineReceiptJson = JSON.stringify(receipt);
-          } catch (rcptErr) {
-            console.warn('[OFFLINE_RECEIPT] Failed to generate signed receipt:', rcptErr);
-          }
+          // Paper §4.1: the offline handoff QR carries the sender-signed HTE
+          // envelope P itself — no ad-hoc HMAC receipt. The receiver relays the
+          // same P to POST /transfer/claim; settlement stays server-authoritative.
+          const offlineReceiptJson = envelope ? JSON.stringify(envelope) : '';
 
           await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), offlineRef, {
-            nonRefundable: isQr,
             retryCount: 0,
             envelope,
           });
 
-          // Deduct from local user state optimistically
-          const currentBal = parseFloat(user.balance || 0);
-          const newBal = Math.max(0, currentBal - cleanedAmount);
-          const currentSpent = parseFloat(user.today_spent || 0);
-          const newSpent = currentSpent + cleanedAmount;
+          // Paper §4.1: no offline settlement — do NOT deduct the balance locally.
+          // The queued transaction is `pending`; the server settles it on reconnect
+          // and the normal delta-sync then updates the balance.
 
-          await updateUser({
-            ...user,
-            balance: newBal,
-            today_spent: newSpent,
-          });
-
-          // Save updated balance to SQLite so dashboard reads fresh data
-          try {
-            await db.saveCachedUser(user.username, { ...user, balance: newBal, today_spent: newSpent });
-          } catch (e) {}
-
-          // Save transaction to cached_transactions so it appears in dashboard & history immediately
+          // Save the pending transaction so it appears in dashboard & history immediately
           const offlineTx = {
             id: offlineRef,
             sender_username: user.username,
             receiver_username: cleanedReceiver,
             amount: cleanedAmount,
             type: String(type),
-            status: 'success',
+            // Deferred submission: not settled yet (paper §4.1, receiver-authoritative).
+            status: 'pending',
             reference: offlineRef,
             created_at: new Date().toISOString(),
             operator: operator || '',
@@ -318,7 +293,7 @@ export default function TransactionProcessing() {
           safeReplace({
             pathname: '/transaction-result',
             params: {
-              status: 'success',
+              status: 'pending',
               receiverUsername: cleanedReceiver,
               amount: cleanedAmount.toString(),
               referenceNo: offlineRef,
@@ -336,67 +311,9 @@ export default function TransactionProcessing() {
           return;
         }
 
-        // If QR payment failed after 5 live retries:
-        // Permanently cut money from sender (no refund) and alert bank
-        if (isQr && attempts >= 5) {
-          const currentBal = parseFloat(user.balance || 0);
-          const newBal = Math.max(0, currentBal - cleanedAmount);
-          const currentSpent = parseFloat(user.today_spent || 0);
-          const newSpent = currentSpent + cleanedAmount;
-
-          await updateUser({
-            ...user,
-            balance: newBal,
-            today_spent: newSpent,
-          });
-
-          try {
-            await db.saveCachedUser(user.username, { ...user, balance: newBal, today_spent: newSpent });
-          } catch (e) {}
-
-          const failRef = `FAIL-QR-${Math.floor(100000 + Math.random() * 900000)}`;
-
-          // Report permanent failure to bank
-          await api.reportFailedTransaction({
-            username: user.username,
-            receiver: cleanedReceiver,
-            amount: cleanedAmount,
-            retries: 5,
-            reference: failRef,
-            reason: result?.message || 'QR Payment failed after 5 retries. Debited permanently without refund.',
-          });
-
-          // Save failed transaction to SQLite cache as forfeited_no_refund
-          const failedTx = {
-            id: failRef,
-            sender_username: user.username,
-            receiver_username: cleanedReceiver,
-            amount: cleanedAmount,
-            type: 'qr_payment',
-            status: 'forfeited_no_refund',
-            failure_reason: '৫ বার চেষ্টার পরও পেমেন্ট ব্যর্থ হয়েছে। টাকা স্থায়ীভাবে কর্তন করা হয়েছে এবং ব্যাংককে রিপোর্ট পাঠানো হয়েছে।',
-            reference: failRef,
-            created_at: new Date().toISOString(),
-          };
-          await db.mergeCachedTransactions(user.username, [failedTx]);
-          syncService.notifyDataChanged();
-
-          safeReplace({
-            pathname: '/transaction-result',
-            params: {
-              status: 'failed_unrefunded',
-              receiverUsername: cleanedReceiver,
-              amount: cleanedAmount.toString(),
-              referenceNo: failRef,
-              dateTime: new Date().toLocaleString(),
-              type,
-              errorReason: language === 'en'
-                ? 'Payment failed after 5 attempts. Funds debited and bank notified.'
-                : '৫ বার চেষ্টার পরও লেনদেন সম্পন্ন হয়নি। টাকা কর্তন করা হয়েছে এবং ব্যাংককে অবহিত করা হয়েছে।',
-            },
-          });
-          return;
-        }
+        // NOTE: the previous "permanently debit after 5 QR retries (non-refundable)"
+        // policy was removed for paper conformance. A transfer that cannot be settled
+        // now simply fails (no debit) — settlement is receiver-authoritative.
 
         // For Service Payments (Mobile Recharge, Merchant, Bill Payment):
         // The backend has no service endpoints, so these can never be confirmed.
@@ -404,20 +321,7 @@ export default function TransactionProcessing() {
         const isServicePayment = type === 'mobile_recharge' || type === 'merchant_payment' || type === 'bill_payment';
         if (isServicePayment && (errorMsg.toLowerCase().includes('receiver') || errorMsg.toLowerCase().includes('not found'))) {
           const serviceRef = `OFF-SRV-${Math.floor(100000 + Math.random() * 900000)}`;
-          const currentBal = parseFloat(user.balance || 0);
-          const newBal = Math.max(0, currentBal - cleanedAmount);
-          const currentSpent = parseFloat(user.today_spent || 0);
-          const newSpent = currentSpent + cleanedAmount;
-
-          await updateUser({
-            ...user,
-            balance: newBal,
-            today_spent: newSpent,
-          });
-
-          try {
-            await db.saveCachedUser(user.username, { ...user, balance: newBal, today_spent: newSpent });
-          } catch (e) {}
+          // Paper §4.1: no offline settlement — do NOT deduct locally.
 
           const newTx = {
             id: serviceRef,
@@ -425,7 +329,7 @@ export default function TransactionProcessing() {
             receiver_username: cleanedReceiver,
             amount: cleanedAmount,
             type: String(type),
-            status: 'success',
+            status: 'pending',
             reference: serviceRef,
             created_at: new Date().toISOString(),
             operator: operator || '',
@@ -443,7 +347,7 @@ export default function TransactionProcessing() {
           safeReplace({
             pathname: '/transaction-result',
             params: {
-              status: 'success',
+              status: 'pending',
               receiverUsername: cleanedReceiver,
               amount: cleanedAmount.toString(),
               referenceNo: serviceRef,

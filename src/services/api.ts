@@ -57,10 +57,62 @@ export interface ServerKeyInfo {
   publicKey: string;
   keyId: string;
   rsaPublicKey?: string;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  alg?: string;
+  version?: number;
+  fetchedAt?: number;
+  revokedAt?: string | null;
+  forceOnlineResync?: boolean;
+}
+
+const SERVER_KEY_CACHE = 'dpt_server_key_v1';
+const DEFAULT_KEY_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h when the server sends no window
+
+/**
+ * Paper §4.1 key-validity caching: cache lifetime τ_cache ≤ (T_end − T_start).
+ */
+function computeKeyCacheTtlMs(info: ServerKeyInfo): number {
+  const from = info.validFrom ? Date.parse(info.validFrom) : NaN;
+  const until = info.validUntil ? Date.parse(info.validUntil) : NaN;
+  if (!isNaN(from) && !isNaN(until) && until > from) {
+    return Math.min(until - from, DEFAULT_KEY_CACHE_TTL_MS);
+  }
+  return DEFAULT_KEY_CACHE_TTL_MS;
+}
+
+/**
+ * Read the receiver ECDH public key cached on-device (usable offline).
+ */
+export async function getCachedServerKeyInfo(): Promise<ServerKeyInfo | null> {
+  try {
+    const raw = await SecureStore.getItemAsync(SERVER_KEY_CACHE);
+    if (!raw) return null;
+    return JSON.parse(raw) as ServerKeyInfo;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the cached receiver key is still within its local cache lifetime.
+ */
+export function isServerKeyFresh(info: ServerKeyInfo | null): boolean {
+  if (!info || !info.fetchedAt) return false;
+  return Date.now() - info.fetchedAt < computeKeyCacheTtlMs(info);
+}
+
+/**
+ * Paper §4.1 emergency revocation: when the receiver key is revoked, clients must
+ * re-synchronize online and must NOT construct further envelopes offline.
+ */
+export function isOfflineEnvelopeAllowed(info: ServerKeyInfo | null): boolean {
+  return !!info && !!info.publicKey && !info.forceOnlineResync;
 }
 
 /**
  * Fetch the server's ECDH P-256 public key and KeyID for Hybrid Transaction Envelopes.
+ * Falls back to the on-device cached copy when offline so envelopes can be built offline.
  */
 export async function getServerKeyInfo(): Promise<ServerKeyInfo | null> {
   try {
@@ -70,15 +122,24 @@ export async function getServerKeyInfo(): Promise<ServerKeyInfo | null> {
     });
     const json = await response.json();
     if (response.ok && (json.ecdh_public_key || json.public_key)) {
-      return {
+      const info: ServerKeyInfo = {
         publicKey: json.ecdh_public_key || json.public_key,
         keyId: json.key_id || json.KeyID || 'hte-bank-ecdh-v1',
         rsaPublicKey: json.rsa_public_key,
+        validFrom: json.valid_from ?? null,
+        validUntil: json.valid_until ?? null,
+        alg: json.alg,
+        version: json.version,
+        fetchedAt: Date.now(),
+        revokedAt: json.revoked_at ?? null,
+        forceOnlineResync: !!json.force_online_resync,
       };
+      SecureStore.setItemAsync(SERVER_KEY_CACHE, JSON.stringify(info)).catch(() => {});
+      return info;
     }
-    return null;
+    return await getCachedServerKeyInfo();
   } catch {
-    return null;
+    return await getCachedServerKeyInfo();
   }
 }
 
@@ -332,6 +393,37 @@ export async function transferWithHTE(
     return await transfer(username, receiver, amount, finalTxId);
   } catch (err: any) {
     return { success: false, message: err?.message || 'Transfer failed' };
+  }
+}
+
+/**
+ * Receiver-side claim of a sender-signed offline envelope P (paper §4.1).
+ * The receiver relays the SAME immutable envelope; the server verifies the
+ * sender's signature and settles atomically — final settlement is receiver-authoritative.
+ */
+export async function claimTransfer(envelope: any): Promise<ApiResult<any>> {
+  try {
+    const response = await fetch(`${BASE_URL}/transfer/claim`, {
+      method: 'POST',
+      headers: await getHeaders(true),
+      body: JSON.stringify({ envelope }),
+    });
+
+    const parsed = await safeParseJsonResponse(response);
+    if (!parsed.success) {
+      return { success: false, message: parsed.message, status: parsed.status };
+    }
+
+    const json = parsed.json;
+    if (response.ok) {
+      if (json.status === 'futile' || json.status === 'failed') {
+        return { success: false, message: json.message || 'Claim failed', status: 200 };
+      }
+      return { success: true, data: json };
+    }
+    return { success: false, message: json.error || json.message || 'Claim failed', status: response.status };
+  } catch (error: any) {
+    return { success: false, message: error.message || 'Network connection failed' };
   }
 }
 

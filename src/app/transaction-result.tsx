@@ -46,6 +46,7 @@ export default function TransactionResult() {
   const [copied, setCopied] = useState(false);
 
   const isSuccess = status === 'success';
+  const isPending = status === 'pending' || status === 'queued_offline' || status === 'submitted';
 
   const getFailureReason = (code: string) => {
     if (errorReason) return errorReason;
@@ -89,7 +90,7 @@ export default function TransactionResult() {
     router.push('/history');
   };
 
-  const gradientColors = isSuccess
+  const gradientColors = (isSuccess || isPending)
     ? (theme.gradient as readonly [string, string, ...string[]])
     : ([theme.error, '#FF6B6B'] as readonly [string, string]);
 
@@ -111,7 +112,7 @@ export default function TransactionResult() {
         <View style={styles.statusIconWrapper}>
           <View style={styles.statusIconInner}>
             <Ionicons
-              name={isSuccess ? 'checkmark' : 'close'}
+              name={isSuccess ? 'checkmark' : isPending ? 'time' : 'close'}
               size={40}
               color="#FFFFFF"
             />
@@ -120,14 +121,20 @@ export default function TransactionResult() {
 
         {/* Status Text */}
         <Text style={styles.statusTitle}>
-          {isSuccess
+          {isPending
+            ? (language === 'en' ? 'Submitted (Pending)' : 'জমা হয়েছে (অপেক্ষমাণ)')
+            : isSuccess
             ? t.transferSuccessful
             : (status === 'failed_unrefunded' || status === 'forfeited_no_refund'
                 ? (language === 'en' ? 'Transfer Failed (Non-Refundable)' : 'লেনদেন ব্যর্থ (অফেরতযোগ্য)')
                 : t.transferFailed)}
         </Text>
         <Text style={styles.statusSubtitle}>
-          {isSuccess
+          {isPending
+            ? (language === 'en'
+                ? 'Queued offline. It will be settled once you are back online.'
+                : 'অফলাইনে জমা হয়েছে। ইন্টারনেট ফিরলে নিষ্পত্তি হবে।')
+            : isSuccess
             ? t.moneySentSuccess
             : (status === 'failed_unrefunded' || status === 'forfeited_no_refund'
                 ? (language === 'en'
@@ -147,7 +154,7 @@ export default function TransactionResult() {
         showsVerticalScrollIndicator={false}
       >
         {/* Failed Reason Card */}
-        {!isSuccess && (
+        {!isSuccess && !isPending && (
           <View style={[styles.reasonCard, { backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.08)' : '#FFF5F5', borderColor: isDarkMode ? 'rgba(255, 56, 56, 0.2)' : '#FFD2D2' }]}>
             <View style={[styles.reasonIconCircle, { backgroundColor: isDarkMode ? 'rgba(255, 56, 56, 0.15)' : '#FFE8E8' }]}>
               <Ionicons name="alert-circle" size={20} color={theme.error} />
@@ -169,7 +176,7 @@ export default function TransactionResult() {
               </View>
               <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{language === 'en' ? 'Amount' : 'পরিমাণ'}</Text>
             </View>
-            <Text style={[styles.detailValueAmount, { color: isSuccess ? theme.success : theme.error }]}>
+            <Text style={[styles.detailValueAmount, { color: isSuccess ? theme.success : isPending ? theme.text : theme.error }]}>
               ৳ {parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </Text>
           </View>
@@ -280,7 +287,7 @@ export default function TransactionResult() {
         </View>
 
         {/* Instant Offline Receiver Settlement Card */}
-        {isSuccess && Boolean(offlineReceipt) && (
+        {(isSuccess || isPending) && Boolean(offlineReceipt) && (
           <View style={[styles.offlineCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
             <View style={styles.offlineCardHeader}>
               <Ionicons name="qr-code" size={20} color={theme.primary} />

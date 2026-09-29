@@ -2026,3 +2026,79 @@ Upon receipt of package $P$, the receiver strictly follows this ordered validati
 - When connectivity returns, `SyncService` submits the **exact same immutable package $P$ and $TxID$**.
 - Because the $TxID$ is cryptographically bound inside $AAD$, $C$, and $Sig$, retries cannot produce duplicate settlements.
 
+---
+
+## 21. HTE Paper Alignment — Offline-First Hardening (Duress Excluded)
+
+> Alignment of the app + backend with `HTE_offline_duress_revised.pdf` (§2, §3, §4.1). **Duress (§3.1) is intentionally out of scope** and is not implemented.
+
+### 21.1 Core envelope fixes
+- **CSPRNG IV**: `createHybridTransactionEnvelope` now draws the 96-bit GCM IV from `Crypto.getRandomBytes(12)` (expo-crypto) instead of a `Date.now()`/`Math.random()` digest (`src/services/crypto.ts`).
+- **Server key caching**: `getServerKeyInfo()` caches `{publicKey, keyId, validFrom, validUntil, alg, version, fetchedAt}` in SecureStore (`dpt_server_key_v1`) and falls back to the cache offline; `getCachedServerKeyInfo()` / `isServerKeyFresh()` added (`src/services/api.ts`).
+
+### 21.2 Backend receiver checks (`e_banking/backend/app.py`)
+- **Atomic check-and-commit**: new `reserve_idempotency()` insert-first reservation on the `idempotency_keys` PRIMARY KEY, `commit_idempotency()`, `release_idempotency()`. Removes the previous check-then-save race.
+- **Atomic settlement**: `update_accounts_atomic()` performs a conditional debit (`balance = balance - %s WHERE balance >= %s RETURNING`) + credit in a single Postgres transaction when a direct DB connection is available; falls back to sequential updates otherwise.
+- **Freshness / nonce / TxID policy**: `check_freshness()` (`HTE_MAX_CLOCK_SKEW_SECONDS`, default 300s), `is_txid_valid()`, `is_nonce_valid()`.
+- **Key validity & revocation**: `validate_key_at_creation()` resolves `valid_from`/`valid_until`/`revoked_at` against the envelope **creation time T**; `KEY_ROTATION_GRACE_SECONDS` (default 86400) grace window.
+- **Server-side daily limit** enforced in both the HTE and plaintext transfer paths.
+- **Risk events**: new `security_events` table; `log_security_event()` writes signature/key/stale/limit rejections.
+- **`/server-public-key`** now also returns `valid_from`, `valid_until`, `alg`, `version`, `revoked_at`.
+
+### 21.3 New endpoint — `POST /transfer/claim`
+- Receiver relays a **sender-signed offline envelope `P`**; the server verifies the sender's ECDSA signature, decrypts to confirm `R`/`A`/`TxID`, binds the caller to the decrypted receiver, then settles atomically. Keeps the offline handoff feature while settlement stays receiver-authoritative. No ad-hoc crypto.
+
+### 21.4 App offline lifecycle
+- **Encrypted queue at rest**: the queued envelope `P` is stored in SecureStore (`dpt_pending_env_<txid>`), not plaintext SQLite (`src/services/db.ts`). SQLite keeps only metadata.
+- **Monotonic `seq_i`**: device-local counter (`dpt_queue_seq_<user>`) stamped per queued item.
+- **Exponential backoff**: `next_attempt_at` per item; `updatePendingOfflineTransactionRetry()` schedules backoff; `SyncService` skips items not yet due.
+- **Deferred-submission status**: offline ledger rows are written as `status: 'pending'` (not `success`); the mapper shows "Offline"/"Pending".
+- **Offline handoff via signed envelope**: the result screen's handoff QR carries `JSON.stringify(P)`; `qr-pay.tsx` parses it and calls `api.claimTransfer()`, or queues a `claim` item when offline (flushed by `SyncService` via `/transfer/claim`).
+
+### 21.5 Removed (for paper conformance)
+- **HMAC-SHA256 offline receipt** (`generateOfflinePaymentReceipt` / `verifyOfflinePaymentReceipt` in `crypto.ts`, and the `offline_receipt` scan branch in `qr-pay.tsx`) — replaced by the signed HTE envelope `P`.
+- **Non-refundable forfeiture** after 5 QR retries (permanent debit + bank alert) in `TransactionProcessingView.tsx`, `transaction-processing.tsx`, and `sync.ts` — replaced by receiver-authoritative rejection + refund.
+
+### 21.6 Still out of scope / known limits
+- **Duress (§3.1)** excluded entirely.
+- **HSM** for the receiver key and true **non-exportable device key (StrongBox)** are not available on this stack; receiver key remains DB-stored PEM and the device key lives in SecureStore.
+- **NFC transfer** (`nfc-transfer.tsx`) keeps its own transport and local settlement; NFC is not specified by the paper.
+- `register()` `NameError` on the undefined `email` variable fixed (`app.py`).
+
+---
+
+## 22. Single-Database Consolidation & Final Hardening
+
+### 22.1 Single database (dual-DB removed)
+- The app previously used **two Supabase projects**: DB1 (identity) and DB2 (business). They are now consolidated into **one** main project.
+- Business tables (`accounts`, `transactions`, `notifications`, `idempotency_keys`, `server_keys`, `security_events`, `used_nonces`) were **created in DB1** and their rows migrated from DB2 (non-destructive; DB2 left intact).
+- `.env.backend` now points both `IDENTITY_SUPABASE_URL` and `SUPABASE_URL` at the same project → `identity_db` and `business_db` are the same database.
+- This makes the **atomic commit** (paper §3 step 8) a true single-transaction operation covering balances, `today_spent`, and the `TxID` record.
+- A one-time DB2 backup was exported before migration.
+
+### 22.2 Nonce replay state
+- `used_nonces` table + `is_nonce_used()` / `mark_nonce_used()`; enforced in `/transfer` (HTE) and `/transfer/claim` (409 on reuse) — paper §3 step 3.
+
+### 22.3 Receiver key protection at rest (HSM-equivalent)
+- `wrap_server_secret()` / `unwrap_server_secret()`: with `SERVER_KEY_WRAP_KEY` (64-hex) set, private-key PEMs are **AES-256-GCM encrypted** before being stored in `server_keys`.
+- **Supabase Vault hook**: set `SERVER_KEY_VAULT_SECRET` and deploy `public.vault_read_secret(text)` (in the SQL schema) to load the ECDH key from Vault (paper §2 "HSM or equivalent isolated service"); falls back to `server_keys`.
+
+### 22.4 Emergency revocation & strict offline
+- `/server-public-key` returns `force_online_resync` when the key is revoked; the app refuses to build envelopes offline then (`api.isOfflineEnvelopeAllowed`).
+- Offline transfers no longer deduct the balance locally (paper §4.1: "not offline settlement"). The transaction is queued as `pending`; the server settles on reconnect and delta-sync updates the balance. The result screen shows **"Submitted (Pending)"**.
+
+### 22.5 App queue hardening
+- `seq_i` gap detection (`db.checkQueueIntegrity()`, run each sync) — paper §4.1.
+- Queued envelopes stored in SecureStore (`dpt_pending_env_*`); metadata + `next_attempt_at` in SQLite.
+
+### 22.6 Remaining gap to 100% (duress excluded)
+- Non-exportable device key (Android Keystore/StrongBox) — native module written (`DptKeystoreModule`); needs an on-device build + test.
+- True hardware HSM (AWS KMS/CloudHSM) — infra; Vault/at-rest wrap is the free equivalent.
+
+### 22.7 Non-exportable device key (Android Keystore/StrongBox)
+- `android/app/src/main/java/com/riajulshakib/dptapp/DptKeystoreModule.kt` + `DptKeystorePackage.kt`, registered in `MainApplication.kt`.
+- Generates a P-256 ECDSA key inside Android Keystore/StrongBox with `setUserAuthenticationRequired(true)` (biometric/credential-gated, 300 s auth window) and signs inside the keystore. DER signatures are converted to raw 64-byte `r||s` to match the backend verifier.
+- JS bridge in `src/services/crypto.ts`: `generateDeviceECDSAKeyPair()` prefers the hardware key; `signWithDeviceKey()` uses it inside `createHybridTransactionEnvelope`.
+- **Fallback**: if the native module is absent (iOS/web/older build) or a sign fails, it uses the software SecureStore key — the app keeps working. A hardware sign failure never falls back to a *different* key (that would break server verification) — it degrades to a non-HTE transfer instead.
+- **Requires a new APK build** (native code) and on-device testing; cannot be verified in a headless environment.
+

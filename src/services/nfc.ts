@@ -389,7 +389,7 @@ export async function stopNFC(): Promise<void> {
     await NfcManager.cancelTechnologyRequest();
   } catch (e) {}
   try {
-    NfcManager.unregisterTagEvent();
+    await NfcManager.unregisterTagEvent();
   } catch (e) {}
 }
 

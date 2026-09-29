@@ -24,7 +24,7 @@ import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import * as db from '../services/db';
-import { verifyQRPayload, verifyOfflinePaymentReceipt, OfflinePaymentReceipt } from '../services/crypto';
+import { verifyQRPayload, parseEnvelopeP } from '../services/crypto';
 import { syncService } from '../services/sync';
 
 export default function QRPay() {
@@ -71,108 +71,80 @@ export default function QRPay() {
       const parsed = JSON.parse(data);
 
       // =========================================================================
-      // 2-WAY OFFLINE QR HANDSHAKE: RECEIVER SCANS SENDER'S RECEIPT QR TO CLAIM
+      // 2-WAY OFFLINE HANDSHAKE: RECEIVER SCANS THE SENDER'S SIGNED ENVELOPE P
+      // The receiver relays the SAME immutable envelope to POST /transfer/claim;
+      // the server verifies the sender's signature and settles (receiver-authoritative).
       // =========================================================================
-      if (parsed.app === 'dpt' && parsed.type === 'offline_receipt') {
-        const receipt = parsed as OfflinePaymentReceipt;
-        const normalizedCurrentUser = (user?.username || '').trim().toLowerCase();
-        const targetReceiver = (receipt.receiver || '').trim().toLowerCase();
+      const incomingEnvelope = parseEnvelopeP(data);
+      if (incomingEnvelope) {
+        const envSender = String(incomingEnvelope.AAD?.S || '').trim().toLowerCase();
+        const envTxid = String(incomingEnvelope.AAD?.TxID || '');
 
-        // 1. Verify Recipient Identity
-        if (targetReceiver !== normalizedCurrentUser) {
+        // Receiver identity is enforced server-side after decryption (R is not in AAD).
+
+        // 2. Local replay guard (server-side TxID idempotency is authoritative)
+        if (envTxid && (await db.isQrNonceUsed(envTxid))) {
           Alert.alert(
-            language === 'en' ? 'Incorrect Recipient' : 'ভুল প্রাপক',
+            language === 'en' ? 'Already Claimed' : 'ইতিমধ্যে গ্রহণ করা হয়েছে',
             language === 'en'
-              ? `This payment receipt is intended for @${receipt.receiver}, not your account (@${user?.username}).`
-              : `এই পেমেন্ট রশিদটি @${receipt.receiver}-এর জন্য তৈরি করা হয়েছে, আপনার অ্যাকাউন্টের (@${user?.username}) জন্য নয়।`,
+              ? 'This payment has already been claimed and cannot be claimed again.'
+              : 'এই পেমেন্টটি ইতিমধ্যে গ্রহণ করা হয়েছে এবং পুনরায় গ্রহণ করা যাবে না।',
             [{ text: 'OK', onPress: () => { setScanned(false); setIsScanning(false); } }]
           );
           return;
         }
 
-        // 2. Anti-Replay Check (Nonce Burn)
-        const isReplayed = await db.isQrNonceUsed(receipt.nonce);
-        if (isReplayed) {
+        // 3. Receiver-authoritative settlement: relay the envelope to the server.
+        const claimRes = await api.claimTransfer(incomingEnvelope);
+        if (claimRes.success) {
+          await db.markQrNonceUsed(envTxid, envSender, user!.username);
+          const creditedBalance = claimRes.data?.receiver_balance;
+          if (user && creditedBalance !== undefined) {
+            await updateUser({ ...user, balance: creditedBalance });
+            try {
+              await db.saveCachedUser(user.username, { ...user, balance: creditedBalance });
+            } catch (_) {}
+          }
+          syncService.notifyDataChanged();
+          syncService.forceSync(user!.username);
           Alert.alert(
-            language === 'en' ? 'Receipt Already Claimed' : 'রশিদটি ইতিমধ্যে গ্রহণ করা হয়েছে',
+            language === 'en' ? 'Money Received!' : 'টাকা গ্রহণ সফল!',
             language === 'en'
-              ? 'This offline payment has already been credited to your account and cannot be claimed again.'
-              : 'এই অফলাইন পেমেন্টটি ইতিমধ্যে আপনার অ্যাকাউন্টে জমা হয়েছে এবং পুনরায় গ্রহণ করা যাবে না।',
-            [{ text: 'OK', onPress: () => { setScanned(false); setIsScanning(false); } }]
+              ? `Payment claimed successfully from @${envSender}.`
+              : `@${envSender} থেকে পেমেন্ট সফলভাবে গ্রহণ করা হয়েছে।`,
+            [{ text: language === 'en' ? 'View Dashboard' : 'ড্যাশবোর্ড দেখুন', onPress: () => router.replace('/dashboard') }]
           );
           return;
         }
 
-        // 3. Cryptographic Signature Verification
-        const isSigValid = await verifyOfflinePaymentReceipt(receipt);
-        if (!isSigValid) {
+        // 4. Offline / network error -> queue the SAME envelope for deferred claim.
+        const claimErr = (claimRes.message || '').toLowerCase();
+        const isNetErr = claimErr.includes('network') || claimErr.includes('fetch') || claimErr.includes('connection failed');
+        if (isNetErr && envTxid) {
+          await db.markQrNonceUsed(envTxid, envSender, user!.username);
+          await db.savePendingOfflineTransaction(
+            user!.username,
+            envSender,
+            0,
+            'claim',
+            envTxid,
+            { envelope: incomingEnvelope }
+          );
+          syncService.notifyDataChanged();
           Alert.alert(
-            language === 'en' ? 'Security Alert' : 'নিরাপত্তা সতর্কতা',
+            language === 'en' ? 'Queued for Claim' : 'দাবি কিউতে রাখা হয়েছে',
             language === 'en'
-              ? 'Cryptographic signature verification failed. This receipt may be counterfeit.'
-              : 'ডিজিটাল স্বাক্ষর যাচাই ব্যর্থ হয়েছে। এই রশিদটি জাল হতে পারে।',
-            [{ text: 'OK', onPress: () => { setScanned(false); setIsScanning(false); } }]
+              ? 'You are offline. This payment will be claimed automatically when you reconnect.'
+              : 'আপনি অফলাইনে আছেন। ইন্টারনেট ফিরলে এই পেমেন্ট স্বয়ংক্রিয়ভাবে দাবি করা হবে।',
+            [{ text: 'OK', onPress: () => router.replace('/dashboard') }]
           );
           return;
         }
-
-        // 4. Burn Nonce Immediately to Prevent Double-Claiming
-        await db.markQrNonceUsed(receipt.nonce, receipt.sender, user!.username);
-
-        // 5. Instant Local SQLite Balance Credit
-        const claimAmount = parseFloat(String(receipt.amount));
-        const currentBal = parseFloat(String(user?.balance || 0));
-        const newBalance = currentBal + claimAmount;
-
-        if (user) {
-          await updateUser({
-            ...user,
-            balance: newBalance,
-          });
-          try {
-            await db.saveCachedUser(user.username, {
-              ...user,
-              balance: newBalance,
-            });
-          } catch (_) {}
-        }
-
-        // 6. Record Incoming Transaction in Local SQLite
-        const incomingTx = {
-          id: receipt.ref || `OFF-REC-${Date.now()}`,
-          sender_username: receipt.sender,
-          receiver_username: user!.username,
-          amount: claimAmount,
-          type: 'receive_money',
-          status: 'success',
-          reference: receipt.ref || `OFF-REC-${Date.now()}`,
-          created_at: new Date(receipt.timestamp || Date.now()).toISOString(),
-        };
-        await db.mergeCachedTransactions(user!.username, [incomingTx]);
-
-        // 7. Enqueue in Pending Offline Transactions for Server Reconciliation
-        await db.savePendingOfflineTransaction(
-          receipt.sender,
-          user!.username,
-          claimAmount,
-          'receive_money',
-          receipt.ref || `OFF-REC-${Date.now()}`
-        );
-
-        // 8. Notify Dashboard & Active Listeners
-        syncService.notifyDataChanged();
 
         Alert.alert(
-          language === 'en' ? 'Money Received Offline!' : 'অফলাইনে টাকা গ্রহণ সফল!',
-          language === 'en'
-            ? `৳${claimAmount.toLocaleString()} received instantly from @${receipt.sender}. Your new balance is ৳${newBalance.toLocaleString()}.`
-            : `@${receipt.sender} থেকে অফলাইনে তাৎক্ষণিক ৳${claimAmount.toLocaleString()} জমা হয়েছে। আপনার নতুন ব্যালেন্স ৳${newBalance.toLocaleString()}।`,
-          [
-            {
-              text: language === 'en' ? 'View Dashboard' : 'ড্যাশবোর্ড দেখুন',
-              onPress: () => router.replace('/dashboard'),
-            },
-          ]
+          language === 'en' ? 'Claim Failed' : 'দাবি ব্যর্থ',
+          claimRes.message || (language === 'en' ? 'This payment could not be claimed.' : 'এই পেমেন্ট দাবি করা যায়নি।'),
+          [{ text: 'OK', onPress: () => { setScanned(false); setIsScanning(false); } }]
         );
         return;
       }

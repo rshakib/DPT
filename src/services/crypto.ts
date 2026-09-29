@@ -11,13 +11,53 @@
 
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
+import { NativeModules } from 'react-native';
 import { p256 } from '@noble/curves/nist.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { hkdf } from '@noble/hashes/hkdf';
 import { gcm } from '@noble/ciphers/aes';
 
+// ---------------------------------------------------------------------------
+// React Native / Hermes does not define a global `crypto.getRandomValues`,
+// which @noble/* (P-256 key generation) requires. Polyfill it from expo-crypto
+// (a real CSPRNG) — without this, device key generation throws
+// "crypto.getRandomValues must be defined".
+// ---------------------------------------------------------------------------
+const _globalCrypto: any = globalThis as any;
+if (!_globalCrypto.crypto) {
+  _globalCrypto.crypto = {};
+}
+if (typeof _globalCrypto.crypto.getRandomValues !== 'function') {
+  _globalCrypto.crypto.getRandomValues = (arr: any) => {
+    const bytes = Crypto.getRandomBytes(arr.byteLength);
+    new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength).set(bytes);
+    return arr;
+  };
+}
+
+// Native Android Keystore bridge (non-exportable device key, paper §2).
+// Absent on iOS/web or builds without the module -> software fallback is used.
+const { DptKeystoreModule } = NativeModules;
+const DEVICE_KEYSTORE_ALIAS = 'dpt_device_ecdsa_keystore_v1';
+
 const DEVICE_ECDSA_PRIVATE_KEY_ALIAS = 'dpt_device_ecdsa_private_key';
 const DEVICE_ECDSA_PUBLIC_KEY_ALIAS = 'dpt_device_ecdsa_public_key';
+
+// Helper: base64-encode raw bytes for the native sign() bridge (standard alphabet).
+const _B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+export function bytesToBase64(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    out += _B64[b0 >> 2];
+    out += _B64[((b0 & 3) << 4) | (b1 >> 4)];
+    out += i + 1 < bytes.length ? _B64[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+    out += i + 2 < bytes.length ? _B64[b2 & 63] : '=';
+  }
+  return out;
+}
 
 // Legacy RSA aliases for backward compatibility
 const RSA_PRIVATE_KEY_ALIAS = 'dpt_rsa_private_key';
@@ -49,11 +89,8 @@ export interface DeviceKeyResult {
   success: boolean;
 }
 
-/**
- * Generate and store device-bound NIST P-256 ECDSA key pair in SecureStore.
- * The public key is sent to the server during user enrollment.
- */
-export async function generateDeviceECDSAKeyPair(): Promise<DeviceKeyResult> {
+/** Software fallback: generate a NIST P-256 ECDSA key pair in SecureStore. */
+async function generateSoftwareDeviceKey(): Promise<DeviceKeyResult> {
   try {
     const keyPair = p256.keygen();
     const privHex = bytesToHex(keyPair.secretKey);
@@ -64,12 +101,69 @@ export async function generateDeviceECDSAKeyPair(): Promise<DeviceKeyResult> {
     await SecureStore.setItemAsync(DEVICE_ECDSA_PRIVATE_KEY_ALIAS, privHex);
     await SecureStore.setItemAsync(DEVICE_ECDSA_PUBLIC_KEY_ALIAS, pubHex);
 
-    console.log('[CRYPTO] Generated & saved device P-256 ECDSA key pair');
+    console.log('[CRYPTO] Generated & saved software device P-256 ECDSA key pair');
     return { publicKeyHex: pubHex, success: true };
   } catch (error) {
     console.warn('[CRYPTO] Failed to generate device ECDSA key pair:', error);
     return { publicKeyHex: '', success: false };
   }
+}
+
+/**
+ * Enroll the device signing key.
+ *
+ * Paper §2: prefers a NON-EXPORTABLE hardware key in Android Keystore/StrongBox
+ * (biometric-gated). Falls back to a software SecureStore key when the native
+ * module is unavailable (iOS/web/build without the module) so the app keeps working.
+ * The returned public key is sent to the server at registration.
+ */
+export async function generateDeviceECDSAKeyPair(): Promise<DeviceKeyResult> {
+  if (DptKeystoreModule?.generateKey) {
+    try {
+      const pubHex = await DptKeystoreModule.generateKey(DEVICE_KEYSTORE_ALIAS, true);
+      if (pubHex && typeof pubHex === 'string') {
+        await SecureStore.setItemAsync(DEVICE_ECDSA_PUBLIC_KEY_ALIAS, pubHex).catch(() => {});
+        console.log('[CRYPTO] Enrolled hardware (Android Keystore) device key');
+        return { publicKeyHex: pubHex, success: true };
+      }
+    } catch (e) {
+      console.warn('[CRYPTO] Keystore enrollment unavailable, using software key:', e);
+    }
+  }
+  return generateSoftwareDeviceKey();
+}
+
+/**
+ * Sign the canonical envelope bytes with the device key (paper §2/§3).
+ * - Hardware path: the private key never leaves the keystore. On failure it THROWS
+ *   (so the caller degrades to a non-HTE transfer) — it never signs with a
+ *   different key, which would break server verification.
+ * - Software path: noble P-256 ECDSA over SHA-256.
+ */
+export async function signWithDeviceKey(data: Uint8Array): Promise<string> {
+  if (DptKeystoreModule?.hasKey) {
+    let has = false;
+    try {
+      has = await DptKeystoreModule.hasKey(DEVICE_KEYSTORE_ALIAS);
+    } catch {
+      has = false;
+    }
+    if (has) {
+      const sigHex = await DptKeystoreModule.sign(DEVICE_KEYSTORE_ALIAS, bytesToBase64(data));
+      if (!sigHex || typeof sigHex !== 'string') {
+        throw new Error('Keystore signing returned no signature');
+      }
+      return sigHex;
+    }
+  }
+
+  let privHex = await getStoredDeviceECDSAPrivateKey();
+  if (!privHex) {
+    await generateSoftwareDeviceKey();
+    privHex = await getStoredDeviceECDSAPrivateKey();
+  }
+  if (!privHex) throw new Error('Unable to access device signing key');
+  return bytesToHex(p256.sign(data, hexToBytes(privHex)));
 }
 
 /**
@@ -206,14 +300,8 @@ export async function createHybridTransactionEnvelope(
     // 6. Derive transaction key KT (32 bytes)
     const KT = hkdf(sha256, Z, salt, infoInput, 32);
 
-    // 7. 96-bit (12-byte) IV & AAD
-    const iv = new Uint8Array(12);
-    // Use expo-crypto for secure random IV bytes
-    const randomHex = await Crypto.digestStringAsync(
-      Crypto.CryptoDigestAlgorithm.SHA256,
-      `${Date.now()}-${Math.random()}-${TxID}`
-    );
-    iv.set(hexToBytes(randomHex.substring(0, 24)));
+    // 7. Fresh 96-bit (12-byte) GCM IV from a CSPRNG (paper eq. 7).
+    const iv = Crypto.getRandomBytes(12);
 
     const AAD_obj = { KeyID, N, S, T, TxID, ePK: ePK_hex, v };
     // Canonical JSON: sorted keys without extra spaces
@@ -225,18 +313,6 @@ export async function createHybridTransactionEnvelope(
     const encrypted = aesCipher.encrypt(M_bytes);
     const ciphertext = encrypted.slice(0, -16);
     const tag = encrypted.slice(-16);
-
-    // 9. Load device private key for ECDSA signature
-    let devicePrivHex = await getStoredDeviceECDSAPrivateKey();
-    if (!devicePrivHex) {
-      console.warn('[CRYPTO] Device ECDSA private key not found, generating on-the-fly...');
-      const newKey = await generateDeviceECDSAKeyPair();
-      devicePrivHex = await getStoredDeviceECDSAPrivateKey();
-      if (!devicePrivHex) {
-        throw new Error('Unable to access device signing key');
-      }
-    }
-    const devicePrivBytes = hexToBytes(devicePrivHex);
 
     // 10. Canonical ECDSA Signature over (v || KeyID || ePK || IV || C || Tag || AAD)
     const vKeyIdBytes = new TextEncoder().encode(`${v}${KeyID}`);
@@ -257,8 +333,8 @@ export async function createHybridTransactionEnvelope(
     canonicalData.set(tag, offset); offset += tag.length;
     canonicalData.set(AAD_bytes, offset);
 
-    // noble's p256.sign handles SHA-256 hashing internally per RFC 6979
-    const sigRaw = p256.sign(canonicalData, devicePrivBytes);
+    // Hardware (Keystore) signature when available; otherwise software noble P-256.
+    const sigHex = await signWithDeviceKey(canonicalData);
 
     return {
       v,
@@ -268,7 +344,7 @@ export async function createHybridTransactionEnvelope(
       IV: bytesToHex(iv),
       C: bytesToHex(ciphertext),
       Tag: bytesToHex(tag),
-      Sig: bytesToHex(sigRaw),
+      Sig: sigHex,
     };
   } catch (error) {
     console.warn('[CRYPTO] Failed to create HTE envelope:', error);
@@ -352,63 +428,25 @@ export async function verifyQRPayload(
   return false;
 }
 
-export interface OfflinePaymentReceipt {
-  app: 'dpt';
-  type: 'offline_receipt';
-  version: 1;
-  sender: string;
-  receiver: string;
-  amount: number;
-  ref: string;
-  timestamp: number;
-  nonce: string;
-  sig: string;
+/**
+ * Offline handoff uses the paper's signed HTE envelope P itself — no ad-hoc
+ * HMAC receipt. The sender renders `serializeEnvelopeP(envelope)` as a QR code;
+ * the receiver parses it and submits the SAME immutable P to `POST /transfer/claim`
+ * so settlement stays receiver-authoritative.
+ */
+export function serializeEnvelopeP(envelope: HTEEnvelopePackage): string {
+  return JSON.stringify(envelope);
 }
 
-export async function generateOfflinePaymentReceipt(
-  sender: string,
-  receiver: string,
-  amount: number,
-  ref: string,
-  nonce: string
-): Promise<OfflinePaymentReceipt> {
-  const timestamp = Date.now();
-  const normalizedSender = sender.trim().toLowerCase();
-  const normalizedReceiver = receiver.trim().toLowerCase();
-  const baseData = `dpt:offline_receipt:${normalizedSender}:${normalizedReceiver}:${amount}:${ref}:${timestamp}:${nonce}`;
-  const sig = await signQRPayload(baseData);
-
-  return {
-    app: 'dpt',
-    type: 'offline_receipt',
-    version: 1,
-    sender: normalizedSender,
-    receiver: normalizedReceiver,
-    amount,
-    ref,
-    timestamp,
-    nonce,
-    sig,
-  };
-}
-
-export async function verifyOfflinePaymentReceipt(
-  receipt: OfflinePaymentReceipt
-): Promise<boolean> {
-  if (
-    !receipt ||
-    receipt.app !== 'dpt' ||
-    receipt.type !== 'offline_receipt' ||
-    !receipt.sender ||
-    !receipt.receiver ||
-    !receipt.amount ||
-    !receipt.nonce ||
-    !receipt.sig ||
-    !receipt.timestamp
-  ) {
-    return false;
+export function parseEnvelopeP(raw: string): HTEEnvelopePackage | null {
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && obj.ePK && obj.AAD && obj.Sig) {
+      return obj as HTEEnvelopePackage;
+    }
+    return null;
+  } catch {
+    return null;
   }
-
-  const baseData = `dpt:offline_receipt:${receipt.sender}:${receipt.receiver}:${receipt.amount}:${receipt.ref}:${receipt.timestamp}:${receipt.nonce}`;
-  return await verifyQRPayload(baseData, receipt.sig);
 }

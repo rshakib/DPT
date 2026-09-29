@@ -1,6 +1,53 @@
 import * as SQLite from 'expo-sqlite';
+import * as SecureStore from 'expo-secure-store';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+
+// Paper §4.1: queued envelopes are kept in platform secure storage (keystore-backed),
+// never as plaintext in SQLite. Telemetry rows in SQLite hold only metadata.
+const PENDING_ENV_PREFIX = 'dpt_pending_env_';
+const QUEUE_SEQ_PREFIX = 'dpt_queue_seq_';
+
+/** Exponential backoff schedule for deferred submission (paper §4.1). */
+function backoffMsFor(retryCount: number): number {
+  const base = Math.min(Math.pow(2, Math.max(0, retryCount)) * 1000, 5 * 60 * 1000);
+  return base;
+}
+
+// Serialize ALL SQLite access on one in-process queue. Concurrent writers
+// (15s sync + screens + subscribers) otherwise race and throw
+// "database is locked" from NativeStatement.finalizeAsync.
+let _dbLock: Promise<unknown> = Promise.resolve();
+let _dbLockDepth = 0;
+
+export function withDbLock<T>(fn: () => Promise<T>): Promise<T> {
+  // Re-entrant: calls made *inside* a locked operation (e.g. statements inside
+  // withTransactionAsync) must not deadlock.
+  if (_dbLockDepth > 0) return fn();
+  const run = _dbLock.then(async () => {
+    _dbLockDepth++;
+    try {
+      return await fn();
+    } finally {
+      _dbLockDepth--;
+    }
+  });
+  _dbLock = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+/** Monotonic device-local queue sequence number seq_i (distinct from TxID). */
+async function getNextQueueSeq(username: string): Promise<number> {
+  const key = `${QUEUE_SEQ_PREFIX}${username}`;
+  try {
+    const raw = await SecureStore.getItemAsync(key);
+    const next = (raw ? parseInt(raw, 10) : 0) + 1;
+    await SecureStore.setItemAsync(key, String(next));
+    return next;
+  } catch {
+    return 0;
+  }
+}
 
 function toEpoch(dateStr: any): number {
   if (!dateStr) return 0;
@@ -153,6 +200,24 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
         try {
           await db.execAsync(`ALTER TABLE user_settings ADD COLUMN display_name TEXT;`);
         } catch (e) {}
+        try {
+          await db.execAsync(`ALTER TABLE pending_offline_transactions ADD COLUMN seq INTEGER;`);
+        } catch (e) {}
+        try {
+          await db.execAsync(`ALTER TABLE pending_offline_transactions ADD COLUMN next_attempt_at INTEGER;`);
+        } catch (e) {}
+
+        // Serialize every DB operation to prevent "database is locked".
+        const origRun = db.runAsync.bind(db);
+        const origExec = db.execAsync.bind(db);
+        const origAll = db.getAllAsync.bind(db);
+        const origFirst = db.getFirstAsync.bind(db);
+        const origTx = db.withTransactionAsync.bind(db);
+        (db as any).runAsync = (...a: any[]) => withDbLock(() => (origRun as any)(...a));
+        (db as any).execAsync = (...a: any[]) => withDbLock(() => (origExec as any)(...a));
+        (db as any).getAllAsync = (...a: any[]) => withDbLock(() => (origAll as any)(...a));
+        (db as any).getFirstAsync = (...a: any[]) => withDbLock(() => (origFirst as any)(...a));
+        (db as any).withTransactionAsync = (fn: any) => withDbLock(() => origTx(fn));
 
         return db;
       } catch (err) {
@@ -485,7 +550,19 @@ export async function savePendingOfflineTransaction(
     const createdAt = new Date().toISOString();
     const createdAtEpoch = Date.now();
     const retryCount = options?.retryCount || 0;
-    const nonRefundable = options?.nonRefundable ? true : (type === 'qr_payment');
+    const seq = await getNextQueueSeq(username);
+
+    // Keep the signed envelope P in platform secure storage (keystore-backed),
+    // not in plaintext SQLite (paper §4.1 local queue protection).
+    const envelopeJson = options?.envelope ? JSON.stringify(options.envelope) : null;
+    if (envelopeJson) {
+      try {
+        await SecureStore.setItemAsync(`${PENDING_ENV_PREFIX}${reference}`, envelopeJson);
+      } catch (e) {
+        console.warn('Failed to secure-store pending envelope:', e);
+      }
+    }
+
     const payload = {
       id: reference,
       username,
@@ -495,13 +572,14 @@ export async function savePendingOfflineTransaction(
       reference,
       createdAt,
       retryCount,
-      nonRefundable,
-      envelope: options?.envelope,
+      seq,
+      nextAttemptAt: 0,
+      hasEnvelope: !!envelopeJson,
     };
 
     await db.runAsync(
-      `INSERT OR REPLACE INTO pending_offline_transactions (id, username, receiver, amount, type, created_at, created_at_epoch, status, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [reference, username, receiver, amount, type, createdAt, createdAtEpoch, 'pending', JSON.stringify(payload)]
+      `INSERT OR REPLACE INTO pending_offline_transactions (id, username, receiver, amount, type, created_at, created_at_epoch, status, raw_json, seq, next_attempt_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [reference, username, receiver, amount, type, createdAt, createdAtEpoch, 'pending', JSON.stringify(payload), seq, 0]
     );
   } catch (error) {
     console.warn('Failed to save pending offline transaction:', error);
@@ -521,9 +599,12 @@ export async function updatePendingOfflineTransactionRetry(id: string, retryCoun
     if (row && row.raw_json) {
       const parsed = JSON.parse(row.raw_json);
       parsed.retryCount = retryCount;
+      // Exponential backoff: earliest time this item may be resubmitted (paper §4.1).
+      const nextAttemptAt = Date.now() + backoffMsFor(retryCount);
+      parsed.nextAttemptAt = nextAttemptAt;
       await db.runAsync(
-        'UPDATE pending_offline_transactions SET raw_json = ? WHERE id = ?',
-        [JSON.stringify(parsed), id]
+        'UPDATE pending_offline_transactions SET raw_json = ?, next_attempt_at = ? WHERE id = ?',
+        [JSON.stringify(parsed), nextAttemptAt, id]
       );
     }
   } catch (error) {
@@ -537,11 +618,28 @@ export async function updatePendingOfflineTransactionRetry(id: string, retryCoun
 export async function getPendingOfflineTransactions(username: string): Promise<any[]> {
   try {
     const db = await getDb();
-    const rows = await db.getAllAsync<{ raw_json: string }>(
-      'SELECT raw_json FROM pending_offline_transactions WHERE username = ? ORDER BY created_at_epoch ASC',
+    const rows = await db.getAllAsync<{ id: string; raw_json: string }>(
+      'SELECT id, raw_json FROM pending_offline_transactions WHERE username = ? ORDER BY created_at_epoch ASC',
       [username]
     );
-    return rows.map((r) => JSON.parse(r.raw_json));
+    const items: any[] = [];
+    for (const r of rows) {
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(r.raw_json);
+      } catch {
+        parsed = {};
+      }
+      // Rehydrate the signed envelope P from keystore-backed storage.
+      const envRaw = await SecureStore.getItemAsync(`${PENDING_ENV_PREFIX}${r.id}`).catch(() => null);
+      if (envRaw) {
+        try {
+          parsed.envelope = JSON.parse(envRaw);
+        } catch {}
+      }
+      items.push(parsed);
+    }
+    return items;
   } catch (error) {
     console.warn('Failed to retrieve pending offline transactions:', error);
     return [];
@@ -549,12 +647,42 @@ export async function getPendingOfflineTransactions(username: string): Promise<a
 }
 
 /**
- * Remove a resolved/settled offline transaction from the queue.
+ * Detect gaps/corruption in the device-local queue sequence seq_i (paper §4.1).
+ * Returns the missing sequence numbers, if any.
+ */
+export async function checkQueueIntegrity(username: string): Promise<{ ok: boolean; gaps: number[] }> {
+  try {
+    const db = await getDb();
+    const rows = await db.getAllAsync<{ seq: number | null }>(
+      'SELECT seq FROM pending_offline_transactions WHERE username = ? ORDER BY seq ASC',
+      [username]
+    );
+    const seqs = rows
+      .map((r) => r.seq)
+      .filter((s): s is number => typeof s === 'number' && s > 0);
+    if (seqs.length === 0) return { ok: true, gaps: [] };
+
+    const gaps: number[] = [];
+    for (let i = 1; i < seqs.length; i++) {
+      if (seqs[i] !== seqs[i - 1] + 1) {
+        for (let missing = seqs[i - 1] + 1; missing < seqs[i]; missing++) gaps.push(missing);
+      }
+    }
+    return { ok: gaps.length === 0, gaps };
+  } catch (error) {
+    console.warn('Failed to check queue integrity:', error);
+    return { ok: true, gaps: [] };
+  }
+}
+
+/**
+ * Remove a resolved/settled offline transaction from the queue and its secured envelope.
  */
 export async function removePendingOfflineTransaction(id: string): Promise<void> {
   try {
     const db = await getDb();
     await db.runAsync('DELETE FROM pending_offline_transactions WHERE id = ?', [id]);
+    await SecureStore.deleteItemAsync(`${PENDING_ENV_PREFIX}${id}`).catch(() => {});
   } catch (error) {
     console.warn('Failed to delete pending offline transaction:', error);
   }
