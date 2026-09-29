@@ -4,7 +4,7 @@ import * as api from '../services/api';
 
 import * as db from '../services/db';
 import { syncService } from '../services/sync';
-import { saveLocalPinHash, clearLocalPinHash } from '../utils/security';
+import { saveLocalPinHash, clearLocalPinHash, DURESS_LIMIT_DEFAULT } from '../utils/security';
 
 const TOKEN_KEY = 'niropay_token';
 const USER_KEY = 'niropay_user';
@@ -20,6 +20,10 @@ interface AuthContextType {
   /** True when the session was unlocked with the duress PIN (paper §3.1). */
   isDuressMode: boolean;
   setDuressMode: (v: boolean) => void;
+  /** Decoy wallet balance shown in duress mode (0..L_D), decreases as money is spent. */
+  duressBalance: number;
+  initDuressBalance: (realBalance: any) => void;
+  adjustDuressBalance: (delta: number) => void;
   login: (username: string, pin: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => Promise<void>;
   switchAccount: () => Promise<void>;
@@ -35,6 +39,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [isDuressMode, setIsDuressMode] = useState(false);
+  const [duressBalance, setDuressBalance] = useState(0);
+
+  // Initialise the duress "decoy" wallet to min(real balance, L_D). It then moves
+  // down/up as the user spends/receives while in duress mode, staying within 0..L_D.
+  const initDuressBalance = React.useCallback((realBalance: any) => {
+    setDuressBalance(Math.min(Number(realBalance || 0), DURESS_LIMIT_DEFAULT));
+  }, []);
+  const adjustDuressBalance = React.useCallback((delta: number) => {
+    setDuressBalance((b) => Math.min(DURESS_LIMIT_DEFAULT, Math.max(0, b + delta)));
+  }, []);
 
   // Load session from SecureStore on mount & read SQLite cache
   useEffect(() => {
@@ -199,6 +213,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isAuthenticated,
         isDuressMode,
         setDuressMode: setIsDuressMode,
+        duressBalance,
+        initDuressBalance,
+        adjustDuressBalance,
         login,
         logout,
         switchAccount,

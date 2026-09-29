@@ -54,7 +54,7 @@ export function TransactionProcessingView({
   const { theme } = useAppTheme();
   const { language } = useLanguage();
   const t = translations[language];
-  const { user, updateUser, isDuressMode } = useAuth();
+  const { user, updateUser, isDuressMode, adjustDuressBalance } = useAuth();
 
   const [authStep, setAuthStep] = useState<StepState>('validating');
 
@@ -214,6 +214,11 @@ export function TransactionProcessingView({
         // Trigger an immediate sync to fetch the real transaction from server
         syncService.forceSync(user.username);
 
+        // Duress mode: reduce the decoy wallet shown to the user.
+        if (isDuressMode) {
+          adjustDuressBalance(-cleanedAmount);
+        }
+
         setAuthStep('submitting');
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -255,6 +260,7 @@ export function TransactionProcessingView({
           // Conservative local L_D counter for offline duress envelopes (paper §4.1).
           if (isDuressMode) {
             await addDuressSpent(user.username, cleanedAmount);
+            adjustDuressBalance(-cleanedAmount);
           }
 
           // Paper §4.1: no offline settlement — do NOT deduct the balance locally.
@@ -335,6 +341,10 @@ export function TransactionProcessingView({
           await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), serviceRef, {
             retryCount: 0,
           });
+          if (isDuressMode) {
+            await addDuressSpent(user.username, cleanedAmount);
+            adjustDuressBalance(-cleanedAmount);
+          }
           syncService.notifyDataChanged();
 
           safeReplace({

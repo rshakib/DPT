@@ -99,9 +99,10 @@ export default function SecurityCenter() {
     );
   };
 
-  const { user } = useAuth();
+  const { user, isDuressMode } = useAuth();
   const [duressPin, setDuressPin] = useState('');
   const [duressConfigured, setDuressConfigured] = useState(false);
+  const [showDuressInput, setShowDuressInput] = useState(false);
 
   useEffect(() => {
     if (user?.username) {
@@ -122,6 +123,7 @@ export default function SecurityCenter() {
     setDuressPin('');
     if (ok) {
       setDuressConfigured(true);
+      setShowDuressInput(false);
       triggerToast(language === 'en' ? 'Duress PIN saved' : 'ডিউরেস পিন সংরক্ষিত');
     }
   };
@@ -208,39 +210,53 @@ export default function SecurityCenter() {
             {language === 'en' ? 'Duress PIN' : 'ডিউরেস পিন'}
           </Text>
           <Text style={[styles.sectionSubtitle, { color: theme.textSecondary, marginBottom: Spacing.sm }]}>
-            {duressConfigured
-              ? (language === 'en' ? `Configured · spend limit ৳${DURESS_LIMIT_DEFAULT}` : `সেট করা হয়েছে · সীমা ৳${DURESS_LIMIT_DEFAULT}`)
-              : (language === 'en'
-                  ? `Unlocks a restricted profile (৳${DURESS_LIMIT_DEFAULT}) with a separate signing key.`
-                  : `আলাদা সাইনিং কী দিয়ে সীমিত প্রোফাইল (৳${DURESS_LIMIT_DEFAULT}) আনলক করে।`)}
+            {language === 'en'
+              ? `Unlocks a restricted profile (৳${DURESS_LIMIT_DEFAULT}) with a separate signing key.`
+              : `আলাদা সাইনিং কী দিয়ে সীমিত প্রোফাইল (৳${DURESS_LIMIT_DEFAULT}) আনলক করে।`}
           </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
-            <TextInput
-              style={{
-                flex: 1,
-                borderWidth: 1,
-                borderColor: theme.border,
-                borderRadius: 12,
-                paddingHorizontal: Spacing.md,
-                paddingVertical: 12,
-                color: theme.text,
-              }}
-              value={duressPin}
-              onChangeText={(v) => setDuressPin(v.replace(/[^0-9]/g, '').slice(0, 5))}
-              placeholder={language === 'en' ? 'Enter 5-digit duress PIN' : '৫ ডিজিটের ডিউরেস পিন'}
-              placeholderTextColor={theme.textSecondary}
-              keyboardType="number-pad"
-              secureTextEntry
-              maxLength={5}
-            />
-            <TouchableOpacity
-              style={{ backgroundColor: theme.primary, borderRadius: 12, paddingHorizontal: Spacing.lg, paddingVertical: 12 }}
-              onPress={handleSaveDuress}
-              activeOpacity={0.8}
-            >
-              <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>{t.save || 'Save'}</Text>
-            </TouchableOpacity>
-          </View>
+
+          {/* In duress mode the fact that a duress PIN exists is hidden (show "not set"). */}
+          {(duressConfigured && !isDuressMode && !showDuressInput) ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs }}>
+                <Ionicons name="checkmark-circle" size={18} color={theme.success} />
+                <Text style={{ color: theme.success, fontWeight: '700' }}>
+                  {language === 'en' ? 'Already set' : 'সেট করা আছে'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowDuressInput(true)} activeOpacity={0.8}>
+                <Text style={{ color: theme.primary, fontWeight: '700' }}>{t.change || 'Change'}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+              <TextInput
+                style={{
+                  flex: 1,
+                  borderWidth: 1,
+                  borderColor: theme.border,
+                  borderRadius: 12,
+                  paddingHorizontal: Spacing.md,
+                  paddingVertical: 12,
+                  color: theme.text,
+                }}
+                value={duressPin}
+                onChangeText={(v) => setDuressPin(v.replace(/[^0-9]/g, '').slice(0, 5))}
+                placeholder={language === 'en' ? 'Enter 5-digit duress PIN' : '৫ ডিজিটের ডিউরেস পিন'}
+                placeholderTextColor={theme.textSecondary}
+                keyboardType="number-pad"
+                secureTextEntry
+                maxLength={5}
+              />
+              <TouchableOpacity
+                style={{ backgroundColor: theme.primary, borderRadius: 12, paddingHorizontal: Spacing.lg, paddingVertical: 12 }}
+                onPress={handleSaveDuress}
+                activeOpacity={0.8}
+              >
+                <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>{t.save || 'Save'}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* Security Settings Options Card */}

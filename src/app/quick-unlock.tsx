@@ -35,7 +35,7 @@ export default function QuickUnlock() {
   const { language, toggleLanguage } = useLanguage();
   const t = translations[language];
 
-  const { user, lastLoggedInUser, logout, switchAccount, setDuressMode } = useAuth();
+  const { user, lastLoggedInUser, logout, switchAccount, setDuressMode, initDuressBalance } = useAuth();
   const { unlock } = useAppLock();
 
   const [step, setStep] = useState<UnlockStep>('pin');
@@ -122,6 +122,7 @@ export default function QuickUnlock() {
           if (!isMounted.current) return;
           setIsPinVerifying(false);
           setDuressMode(true);
+          initDuressBalance(user?.balance);
           if (hasBiometricHardware && isBiometricEnrolled) {
             setStep('biometric');
             triggerBiometricAuth();

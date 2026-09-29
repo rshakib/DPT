@@ -37,7 +37,7 @@ export async function saveLocalPinHash(username: string, pin: string): Promise<v
 // =========================================================================
 
 const DURESS_PIN_HASH_PREFIX = 'niropay_duress_pin_hash_';
-export const DURESS_LIMIT_DEFAULT = 500;
+export const DURESS_LIMIT_DEFAULT = 250;
 
 /** Store the duress PIN hash (hardware-isolated salted SHA-256). */
 export async function saveDuressPinHash(username: string, pin: string): Promise<boolean> {

@@ -25,7 +25,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAppLock } from '../context/AppLockContext';
 import * as api from '../services/api';
 import { saveLocalPinHash } from '../utils/security';
-import { generateRSAKeyPair, generateDeviceECDSAKeyPair } from '../services/crypto';
+import { generateDeviceECDSAKeyPair } from '../services/crypto';
 
 const { width } = Dimensions.get('window');
 
@@ -178,11 +178,10 @@ export default function CreatePassword() {
             password,
           },
         });
-
-        // Also generate legacy RSA keys in background for backward compatibility
-        setTimeout(() => {
-          generateRSAKeyPair().catch(() => {});
-        }, 1000);
+        // NOTE: legacy RSA-2048 device key generation was removed here — node-forge
+        // runs on the JS thread and blocked the UI for several seconds right after
+        // registration (taps on the Activation Success screen felt frozen). RSA is
+        // only a server-side comparison baseline and is not needed by HTE clients.
       } else {
         setIsLoading(false);
         setShowErrorBanner(true);

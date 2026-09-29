@@ -475,15 +475,11 @@ class SyncService {
    * Also keeps Supabase active since the backend queries it on any request.
    */
   private async runHealthCheck(): Promise<void> {
+    // Best-effort keep-alive ping; intentionally silent (no console spam).
     try {
-      const isAlive = await api.healthCheck();
-      if (isAlive) {
-        console.log('[HEALTH CHECK] Server is awake');
-      } else {
-        console.warn('[HEALTH CHECK] Server might be sleeping, will retry next cycle');
-      }
+      await api.healthCheck();
     } catch (e) {
-      console.warn('[HEALTH CHECK] Ping failed:', e);
+      // ignore — Render retries on the next cycle
     }
   }
 }

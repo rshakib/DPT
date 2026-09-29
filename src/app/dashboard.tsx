@@ -68,7 +68,7 @@ export default function Dashboard() {
   const { theme, isDarkMode } = useAppTheme();
   const { language } = useLanguage();
   const t = translations[language];
-  const { user, updateUser, logout } = useAuth();
+  const { user, updateUser, logout, isDuressMode, duressBalance } = useAuth();
 
   const [showBalance, setShowBalance] = useState(true);
   const [profileImage, setProfileImage] = useState<string | null>(null);
@@ -287,7 +287,10 @@ export default function Dashboard() {
           ) : (
             <Text style={styles.balanceAmount}>
               {showBalance
-                ? `৳ ${parseFloat(user?.balance || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                ? `৳ ${(isDuressMode
+                    ? duressBalance
+                    : parseFloat(user?.balance || 0)
+                  ).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
                 : '৳ ••••••'}
             </Text>
           )}
