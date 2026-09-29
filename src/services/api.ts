@@ -529,8 +529,11 @@ export async function verifyPin(username: string, pin: string): Promise<ApiResul
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        // Tell the backend this is a PIN dry-run, not a real session login, so it
+        // does not create a "Login successful" notification for every verification.
+        'X-DPT-Verify-Only': '1',
       },
-      body: JSON.stringify({ username, password: normalizeAuthPassword(pin) }),
+      body: JSON.stringify({ username, password: normalizeAuthPassword(pin), verifyOnly: true }),
     });
 
     const parsed = await safeParseJsonResponse(response);

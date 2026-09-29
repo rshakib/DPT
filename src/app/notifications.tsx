@@ -104,7 +104,18 @@ export default function Notifications() {
       return true;
     });
 
-    return filteredList.map((n: any) => {
+    // Drop exact duplicate notifications (same title + message) — the same event can
+    // be recorded more than once (client local + server, or repeated syncs). Keep the
+    // newest (list is already ordered newest-first).
+    const seenNotif = new Set<string>();
+    const dedupedList = filteredList.filter((n: any) => {
+      const key = `${String(n.title || '')}||${String(n.message || n.body || '')}`;
+      if (seenNotif.has(key)) return false;
+      seenNotif.add(key);
+      return true;
+    });
+
+    return dedupedList.map((n: any) => {
       const typeLower = String(n.notification_type || n.type || '').toLowerCase();
       let iconName = 'notifications-outline';
       let iconBg = '#FFF9E6';

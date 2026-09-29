@@ -77,7 +77,7 @@ function isLocalOnlyId(id: unknown): boolean {
 // row. Outgoing queue rows (OFF-) are excluded on purpose: they are removed by the
 // sync flush on settlement, and hiding them here could mask a genuinely new
 // transfer of the same amount to the same receiver.
-const SUPERSEDABLE_LOCAL_PREFIXES = ['OFF-REC-', 'LOCAL-RECV-'];
+const SUPERSEDABLE_LOCAL_PREFIXES = ['OFF-REC-', 'LOCAL-RECV-', 'NFC-'];
 
 function isSupersedableLocalId(id: unknown): boolean {
   if (id === null || id === undefined) return false;
@@ -342,7 +342,12 @@ export async function saveCachedTransactions(username: string, transactions: any
         [username]
       );
       for (const tx of transactions) {
-        const id = String(tx.id || tx.reference || tx.referenceNo || Math.random());
+        const id = String(
+          tx.id ||
+            tx.reference ||
+            tx.referenceNo ||
+            `${tx.sender_username || tx.sender || ''}>${tx.receiver_username || tx.receiver || ''}@${Number(tx.amount || 0).toFixed(2)}@${tx.created_at || tx.createdAt || tx.timestamp || ''}`
+        );
         const amount = Number(tx.amount || 0);
         const status = String(tx.status || 'success');
         const type = String(tx.type || 'transfer');
@@ -401,7 +406,10 @@ export async function saveCachedNotifications(username: string, notifications: a
     await db.withTransactionAsync(async () => {
       await db.runAsync('DELETE FROM cached_notifications WHERE username = ?', [username]);
       for (const notif of notifications) {
-        const id = String(notif.id || Math.random());
+        const id = String(
+          notif.id ||
+            `${notif.title || ''}|${notif.message || notif.body || ''}|${notif.created_at || notif.createdAt || ''}`
+        );
         const title = String(notif.title || '');
         const message = String(notif.message || notif.body || '');
         const notifType = String(notif.notification_type || notif.type || 'general');
@@ -449,7 +457,12 @@ export async function mergeCachedTransactions(username: string, newTransactions:
     const db = await getDb();
     await db.withTransactionAsync(async () => {
       for (const tx of newTransactions) {
-        const id = String(tx.id || tx.reference || tx.referenceNo || Math.random());
+        const id = String(
+          tx.id ||
+            tx.reference ||
+            tx.referenceNo ||
+            `${tx.sender_username || tx.sender || ''}>${tx.receiver_username || tx.receiver || ''}@${Number(tx.amount || 0).toFixed(2)}@${tx.created_at || tx.createdAt || tx.timestamp || ''}`
+        );
         const amount = Number(tx.amount || 0);
         const status = String(tx.status || 'success');
         const type = String(tx.type || 'transfer');
@@ -498,7 +511,10 @@ export async function mergeCachedNotifications(username: string, newNotification
     const db = await getDb();
     await db.withTransactionAsync(async () => {
       for (const notif of newNotifications) {
-        const id = String(notif.id || Math.random());
+        const id = String(
+          notif.id ||
+            `${notif.title || ''}|${notif.message || notif.body || ''}|${notif.created_at || notif.createdAt || ''}`
+        );
         const title = String(notif.title || '');
         const message = String(notif.message || notif.body || '');
         const notifType = String(notif.notification_type || notif.type || 'general');
