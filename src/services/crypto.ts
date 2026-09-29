@@ -69,10 +69,6 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return out;
 }
 
-// Legacy RSA aliases for backward compatibility
-const RSA_PRIVATE_KEY_ALIAS = 'dpt_rsa_private_key';
-const RSA_PUBLIC_KEY_ALIAS = 'dpt_rsa_public_key';
-
 // Helper: Convert Uint8Array or Buffer to hex string
 export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -379,50 +375,8 @@ export async function createHybridTransactionEnvelope(
 }
 
 // =========================================================================
-// 3. Legacy RSA & QR Verification (Preserved for compatibility)
+// 3. QR Verification (Preserved for compatibility)
 // =========================================================================
-
-export async function generateRSAKeyPair(): Promise<{ publicKeyPem: string; success: boolean }> {
-  try {
-    const forge = require('node-forge');
-    return new Promise((resolve) => {
-      forge.pki.rsa.generateKeyPair({ bits: 2048, workers: -1 }, (err: any, keypair: any) => {
-        if (err) {
-          resolve({ publicKeyPem: '', success: false });
-          return;
-        }
-        try {
-          const publicKeyPem = forge.pki.publicKeyToPem(keypair.publicKey);
-          const privateKeyPem = forge.pki.privateKeyToPem(keypair.privateKey);
-          SecureStore.setItemAsync(RSA_PRIVATE_KEY_ALIAS, privateKeyPem).catch(() => {});
-          SecureStore.setItemAsync(RSA_PUBLIC_KEY_ALIAS, publicKeyPem).catch(() => {});
-          resolve({ publicKeyPem, success: true });
-        } catch {
-          resolve({ publicKeyPem: '', success: false });
-        }
-      });
-    });
-  } catch {
-    return { publicKeyPem: '', success: false };
-  }
-}
-
-export async function getStoredPublicKey(): Promise<string | null> {
-  try {
-    return await SecureStore.getItemAsync(RSA_PUBLIC_KEY_ALIAS);
-  } catch {
-    return null;
-  }
-}
-
-export async function hasRSAKeys(): Promise<boolean> {
-  try {
-    const key = await SecureStore.getItemAsync(RSA_PUBLIC_KEY_ALIAS);
-    return !!key;
-  } catch {
-    return false;
-  }
-}
 
 export async function signQRPayload(payloadStr: string): Promise<string> {
   try {

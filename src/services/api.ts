@@ -56,7 +56,6 @@ export async function healthCheck(): Promise<boolean> {
 export interface ServerKeyInfo {
   publicKey: string;
   keyId: string;
-  rsaPublicKey?: string;
   validFrom?: string | null;
   validUntil?: string | null;
   alg?: string;
@@ -128,7 +127,6 @@ export async function getServerKeyInfo(): Promise<ServerKeyInfo | null> {
       const info: ServerKeyInfo = {
         publicKey: json.ecdh_public_key || json.public_key,
         keyId: json.key_id || json.KeyID || 'hte-bank-ecdh-v1',
-        rsaPublicKey: json.rsa_public_key,
         validFrom: json.valid_from ?? null,
         validUntil: json.valid_until ?? null,
         alg: json.alg,
@@ -235,7 +233,6 @@ export async function register(
   nid: string,
   activationCode: string,
   extraFields?: {
-    rsaPublicKey?: string;
     ecdsaPublicKey?: string;
     ecdsaPublicKeyDuress?: string;
     fullName?: string;
@@ -252,11 +249,9 @@ export async function register(
       nid,
       activationCode,
     };
-    if (extraFields?.rsaPublicKey) payload.rsaPublicKey = extraFields.rsaPublicKey;
     if (extraFields?.ecdsaPublicKey) {
       payload.ecdsaPublicKey = extraFields.ecdsaPublicKey;
       payload.ecdsa_public_key = extraFields.ecdsaPublicKey;
-      if (!payload.rsaPublicKey) payload.rsaPublicKey = extraFields.ecdsaPublicKey;
     }
     if (extraFields?.ecdsaPublicKeyDuress) {
       payload.ecdsaPublicKeyDuress = extraFields.ecdsaPublicKeyDuress;

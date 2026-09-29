@@ -178,10 +178,9 @@ export default function CreatePassword() {
             password,
           },
         });
-        // NOTE: legacy RSA-2048 device key generation was removed here — node-forge
-        // runs on the JS thread and blocked the UI for several seconds right after
-        // registration (taps on the Activation Success screen felt frozen). RSA is
-        // only a server-side comparison baseline and is not needed by HTE clients.
+        // NOTE: the HTE protocol uses P-256 ECDSA only — no RSA device key is
+        // generated. (An earlier legacy RSA-2048 keygen ran on the JS thread and
+        // blocked the UI right after registration; it has been removed.)
       } else {
         setIsLoading(false);
         setShowErrorBanner(true);
