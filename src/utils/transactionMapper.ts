@@ -7,7 +7,7 @@ export interface MappedTransaction {
   amountVal: number;
   isOutgoing: boolean;
   status: string;
-  statusEnglish: 'Successful' | 'Failed';
+  statusEnglish: 'Successful' | 'Failed' | 'Pending';
   rawStatus: string;
   referenceNo: string;
   errorCode?: string;
@@ -38,7 +38,7 @@ export function mapApiTransaction(
 
   if (typeLower === 'sent' || typeLower === 'send' || typeLower === 'send_money' || typeLower === 'user_transfer') {
     isOutgoing = true;
-  } else if (typeLower === 'received' || typeLower === 'receive') {
+  } else if (typeLower === 'received' || typeLower === 'receive' || typeLower === 'receive_money') {
     isOutgoing = false;
   } else if (currentUsername) {
     if (sender === currentUsername) {
@@ -65,7 +65,7 @@ export function mapApiTransaction(
     iconBg = primaryLightColor;
     iconColor = primaryColor;
     displayTitle = `${t.sendMoney || 'Send Money'} to ${displayCounterpart}`;
-  } else if (typeLower === 'received' || typeLower === 'receive') {
+  } else if (typeLower === 'received' || typeLower === 'receive' || typeLower === 'receive_money') {
     iconName = 'arrow-down-outline';
     iconBg = 'rgba(16, 185, 129, 0.12)';
     iconColor = successColor;
@@ -97,7 +97,7 @@ export function mapApiTransaction(
     displayTitle = isOutgoing
       ? `${language === 'en' ? 'NFC Transfer to' : 'NFC ট্রান্সফার:'} ${displayCounterpart}`
       : `${language === 'en' ? 'NFC Transfer from' : 'NFC ট্রান্সফার:'} ${displayCounterpart}`;
-  } else if (typeLower === 'security_penalty') {
+  } else if (typeLower === 'security_penalty' || typeLower === 'security_fraud_penalty') {
     iconName = 'shield-outline';
     iconBg = 'rgba(255, 56, 56, 0.15)';
     iconColor = errorColor;
@@ -135,12 +135,17 @@ export function mapApiTransaction(
   }
 
   const isTxSuccess = tx.status === 'success' || tx.status === 'Successful';
-  const isOfflinePending = String(tx.reference || tx.id || '').startsWith('OFF-');
+  // Only an OUTGOING queued transfer counts as "offline pending". Incoming offline
+  // receipts (OFF-REC-…) are already-claimed credits and must render normally.
+  const localRef = String(tx.reference || tx.id || '');
+  const isOfflinePending = localRef.startsWith('OFF-') && !localRef.startsWith('OFF-REC-');
   const isForfeited = tx.status === 'forfeited_no_refund' || tx.status === 'failed_unrefunded';
+  const isTxPending = tx.status === 'pending';
+  const isTxReversed = tx.status === 'reversed';
   const amountVal = parseFloat(tx.amount || 0);
 
   let displayStatus: string;
-  let displayStatusEnglish: 'Successful' | 'Failed';
+  let displayStatusEnglish: 'Successful' | 'Failed' | 'Pending';
 
   if (isForfeited) {
     displayStatus = language === 'en' ? 'Non-Refundable' : 'অফেরতযোগ্য';
@@ -149,18 +154,39 @@ export function mapApiTransaction(
     iconBg = 'rgba(255, 56, 56, 0.15)';
     iconColor = errorColor;
   } else if (isOfflinePending && isTxSuccess) {
+    // Queued locally, not yet confirmed by the server — must not be reported as a
+    // confirmed success in History.
     displayStatus = language === 'en' ? 'Offline' : 'অফলাইন';
-    displayStatusEnglish = 'Successful'; // placeholder, not used for offline
+    displayStatusEnglish = 'Pending';
   } else if (isTxSuccess) {
     displayStatus = language === 'en' ? 'Successful' : 'সফল';
     displayStatusEnglish = 'Successful';
+  } else if (isTxPending) {
+    displayStatus = language === 'en' ? 'Pending' : 'অপেক্ষমাণ';
+    displayStatusEnglish = 'Pending';
+    iconName = 'time-outline';
+    iconBg = 'rgba(255, 149, 0, 0.12)';
+    iconColor = '#FF9500';
+  } else if (isTxReversed) {
+    displayStatus = language === 'en' ? 'Reversed' : 'ফেরত';
+    displayStatusEnglish = 'Failed';
+    iconName = 'refresh-outline';
+    iconBg = 'rgba(255, 56, 56, 0.15)';
+    iconColor = errorColor;
   } else {
     displayStatus = language === 'en' ? 'Failed' : 'ব্যর্থ';
     displayStatusEnglish = 'Failed';
   }
 
   return {
-    id: String(tx.id || Math.random()),
+    // Deterministic fallback so React list keys stay stable across re-renders
+    // (a Math.random() id remounted every row on each render/sync).
+    id: String(
+      tx.id ||
+        tx.reference ||
+        tx.referenceNo ||
+        [sender, receiver, amountVal, tx.created_at || tx.createdAt || ''].join('|')
+    ),
     title: displayTitle,
     time: formattedTime,
     timestampMs,

@@ -156,13 +156,25 @@ class SyncService {
     console.log(`[SYNC SERVICE] Starting deltaSync for user: ${username}`);
 
     try {
+      // Snapshot the latest transaction timestamp BEFORE flushing offline transactions.
+      // This is critical: if we capture it after deleting OFF- rows, the MAX(epoch)
+      // drops back to an older value, causing the server to return a broader window of
+      // transactions — leading to the double-entry bug in Recent Activity and History.
+      const latestTxTime = await db.getLatestCachedTransactionTimestamp(username);
+      console.log(`[SYNC SERVICE] Snapshot latestTxTime (pre-flush): ${latestTxTime}`);
+
+      // Track which OFF- IDs we successfully settle so we can clean them up after merge.
+      const settledOfflineIds: string[] = [];
+
       // 0. Flush any pending offline transactions to server
       const pendingTx = await db.getPendingOfflineTransactions(username);
       if (pendingTx && pendingTx.length > 0) {
         console.log(`[SYNC SERVICE] Found ${pendingTx.length} pending offline transactions. Flushing to server...`);
         for (const offlineItem of pendingTx) {
           try {
-            const transferRes = await api.transfer(username, offlineItem.receiver, offlineItem.amount);
+            const transferRes = offlineItem.envelope
+              ? await api.transfer(username, offlineItem.receiver, offlineItem.amount, offlineItem.id, offlineItem.envelope)
+              : await api.transfer(username, offlineItem.receiver, offlineItem.amount, offlineItem.id);
             if (transferRes.success) {
               console.log(`[SYNC SERVICE] Offline transaction ${offlineItem.id} settled successfully!`);
               await db.removePendingOfflineTransaction(offlineItem.id);
@@ -175,6 +187,9 @@ class SyncService {
               } catch (delErr) {
                 console.warn('[SYNC SERVICE] Failed to delete offline tx from cache:', delErr);
               }
+
+              // Remember this ID so we can clean up after server merge (race safety net)
+              settledOfflineIds.push(offlineItem.id);
 
               // Save success notification to SQLite
               const successNotif = {
@@ -359,9 +374,10 @@ class SyncService {
         hasChanges = true;
       }
 
-      // 2. Transaction delta sync using latest timestamp
-      const latestTxTime = await db.getLatestCachedTransactionTimestamp(username);
-      console.log(`[SYNC SERVICE] Latest cached transaction timestamp in SQLite: ${latestTxTime}`);
+      // 2. Transaction delta sync using the timestamp snapshotted BEFORE offline flush.
+      // Using the pre-flush snapshot prevents settled OFF- rows from shrinking the
+      // time window — which would otherwise cause the server to re-send old transactions.
+      console.log(`[SYNC SERVICE] Using pre-flush latestTxTime: ${latestTxTime}`);
       const txRes = await api.getTransactions(username, latestTxTime || undefined);
       console.log(`[SYNC SERVICE] Transactions API response: success=${txRes.success}, dataLength=${Array.isArray(txRes.data) ? txRes.data.length : 'not-array'}, message=${txRes.message || 'none'}`);
       if (txRes.success && Array.isArray(txRes.data) && txRes.data.length > 0) {
@@ -372,6 +388,20 @@ class SyncService {
         console.log('[SYNC SERVICE] No new transactions from server');
       } else {
         console.warn(`[SYNC SERVICE] Transactions fetch failed: ${txRes.message}`);
+      }
+
+      // Safety net: delete any OFF- rows that were settled in this cycle but may have
+      // survived the merge due to a race (e.g. mergeCachedTransactions ran concurrently).
+      if (settledOfflineIds.length > 0) {
+        try {
+          const db2 = await db.getDb();
+          for (const offId of settledOfflineIds) {
+            await db2.runAsync('DELETE FROM cached_transactions WHERE id = ?', [offId]);
+          }
+          console.log(`[SYNC SERVICE] Post-merge cleanup: removed ${settledOfflineIds.length} settled OFF- rows`);
+        } catch (cleanupErr) {
+          console.warn('[SYNC SERVICE] Post-merge OFF- cleanup failed:', cleanupErr);
+        }
       }
 
       // 3. Notification delta sync using latest timestamp

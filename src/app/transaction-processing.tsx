@@ -53,6 +53,7 @@ export default function TransactionProcessing() {
   const containerRef = useRef<View>(null);
   const isMounted = useRef(true);
   const isNavigatingRef = useRef(false);
+  const idempotencyKeyRef = useRef(`TX-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`);
 
   const safeReplace = (target: any) => {
     const timestamp = Date.now();
@@ -149,10 +150,32 @@ export default function TransactionProcessing() {
         maxAttempts,
       });
 
+      // Construct Hybrid Transaction Envelope (HTE)
+      let envelope: any = null;
+      try {
+        const keyInfo = await api.getServerKeyInfo();
+        if (keyInfo && keyInfo.publicKey) {
+          const { createHybridTransactionEnvelope } = require('../services/crypto');
+          envelope = await createHybridTransactionEnvelope({
+            sender: user.username,
+            receiver: cleanedReceiver,
+            amount: cleanedAmount,
+            txid: idempotencyKeyRef.current,
+            serverPublicKeyHex: keyInfo.publicKey,
+            keyId: keyInfo.keyId,
+          });
+          if (envelope) {
+            console.log('[HTE] Created signed transaction envelope for txid:', idempotencyKeyRef.current);
+          }
+        }
+      } catch (envErr) {
+        console.warn('[HTE] Could not build HTE envelope:', envErr);
+      }
+
       while (attempts < maxAttempts) {
         attempts++;
         try {
-          result = await api.transfer(user.username, cleanedReceiver, cleanedAmount);
+          result = await api.transfer(user.username, cleanedReceiver, cleanedAmount, idempotencyKeyRef.current, envelope);
         } catch (netErr: any) {
           result = { success: false, message: netErr.message || 'Network connection failed' };
         }
@@ -252,6 +275,7 @@ export default function TransactionProcessing() {
           await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), offlineRef, {
             nonRefundable: isQr,
             retryCount: 0,
+            envelope,
           });
 
           // Deduct from local user state optimistically
@@ -375,11 +399,11 @@ export default function TransactionProcessing() {
         }
 
         // For Service Payments (Mobile Recharge, Merchant, Bill Payment):
-        // If the backend returned receiver_not_found (because merchants / recharge numbers are services rather than user accounts):
-        // Process as successful service transaction, deduct balance, and save to SQLite!
+        // The backend has no service endpoints, so these can never be confirmed.
+        // Queue them as offline transactions instead of fabricating a success.
         const isServicePayment = type === 'mobile_recharge' || type === 'merchant_payment' || type === 'bill_payment';
         if (isServicePayment && (errorMsg.toLowerCase().includes('receiver') || errorMsg.toLowerCase().includes('not found'))) {
-          const serviceRef = `SRV-${Math.floor(100000 + Math.random() * 900000)}`;
+          const serviceRef = `OFF-SRV-${Math.floor(100000 + Math.random() * 900000)}`;
           const currentBal = parseFloat(user.balance || 0);
           const newBal = Math.max(0, currentBal - cleanedAmount);
           const currentSpent = parseFloat(user.today_spent || 0);
@@ -391,7 +415,10 @@ export default function TransactionProcessing() {
             today_spent: newSpent,
           });
 
-          // Append to local cached transactions so history reflects it immediately
+          try {
+            await db.saveCachedUser(user.username, { ...user, balance: newBal, today_spent: newSpent });
+          } catch (e) {}
+
           const newTx = {
             id: serviceRef,
             sender_username: user.username,
@@ -408,6 +435,10 @@ export default function TransactionProcessing() {
           };
 
           await db.mergeCachedTransactions(user.username, [newTx]);
+          await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), serviceRef, {
+            retryCount: 0,
+          });
+          syncService.notifyDataChanged();
 
           safeReplace({
             pathname: '/transaction-result',
@@ -416,13 +447,14 @@ export default function TransactionProcessing() {
               receiverUsername: cleanedReceiver,
               amount: cleanedAmount.toString(),
               referenceNo: serviceRef,
-              dateTime: new Date().toLocaleString(),
+              dateTime: `${new Date().toLocaleString()} (Offline Queued)`,
               type,
               billerName,
               billerAccountNo,
               mobileNumber,
               operator,
               merchantName,
+              isOffline: 'true',
             },
           });
           return;

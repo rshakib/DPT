@@ -25,7 +25,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAppLock } from '../context/AppLockContext';
 import * as api from '../services/api';
 import { saveLocalPinHash } from '../utils/security';
-import { generateRSAKeyPair } from '../services/crypto';
+import { generateRSAKeyPair, generateDeviceECDSAKeyPair } from '../services/crypto';
 
 const { width } = Dimensions.get('window');
 
@@ -127,7 +127,18 @@ export default function CreatePassword() {
         return;
       }
 
-      // Register first (RSA key generation happens in background after)
+      // Generate device P-256 ECDSA key pair (fast & instant)
+      let ecdsaKeyHex = '';
+      try {
+        const ecdsaResult = await generateDeviceECDSAKeyPair();
+        if (ecdsaResult.success) {
+          ecdsaKeyHex = ecdsaResult.publicKeyHex;
+        }
+      } catch (keyErr) {
+        console.warn('[CREATE-PASSWORD] ECDSA key generation error:', keyErr);
+      }
+
+      // Register with device ECDSA public key enrolled
       const result = await api.register(
         username,
         password,
@@ -136,6 +147,7 @@ export default function CreatePassword() {
         {
           fullName: fullName || undefined,
           biometricEnrolled: true,
+          ecdsaPublicKey: ecdsaKeyHex || undefined,
         }
       );
 
@@ -161,20 +173,10 @@ export default function CreatePassword() {
           },
         });
 
-        // Generate RSA keys in background (non-blocking)
+        // Also generate legacy RSA keys in background for backward compatibility
         setTimeout(() => {
-          generateRSAKeyPair().then((keyResult) => {
-            if (keyResult.success && keyResult.publicKeyPem) {
-              console.log('[CREATE-PASSWORD] RSA key generated, uploading to server...');
-              api.register(username, password, nid, activationCode, {
-                rsaPublicKey: keyResult.publicKeyPem,
-              }).catch(() => {});
-            }
-          }).catch((e: any) => {
-            console.warn('[CREATE-PASSWORD] Background RSA generation skipped:', e);
-          });
-        }, 2000);
-
+          generateRSAKeyPair().catch(() => {});
+        }, 1000);
       } else {
         setIsLoading(false);
         setShowErrorBanner(true);
@@ -197,7 +199,9 @@ export default function CreatePassword() {
           <View style={styles.errorBannerLeft}>
             <Ionicons name="alert-circle" size={24} color={theme.error} style={styles.errorBannerIcon} />
             <View style={styles.errorBannerTextContainer}>
-              <Text style={[styles.errorBannerTitle, { color: theme.error }]}>{t.pinRequirementsError}</Text>
+              <Text style={[styles.errorBannerTitle, { color: theme.error }]}>
+                {errorMessage ? (language === 'en' ? 'Registration Error' : 'নিবন্ধন ত্রুটি') : t.pinRequirementsError}
+              </Text>
               <Text style={[styles.errorBannerSubtitle, { color: theme.error }]}>{errorMessage || t.ensurePinCriteria}</Text>
             </View>
           </View>

@@ -24,6 +24,7 @@
     - [Table 3: `cached_notifications`](#table-3-cached_notifications)
     - [Table 4: `pending_offline_transactions`](#table-4-pending_offline_transactions)
     - [Table 5: `user_settings`](#table-5-user_settings)
+    - [Table 6: `used_qr_nonces`](#table-6-used_qr_nonces)
   - [7. SyncService \& Background Delta Sync Logic](#7-syncservice--background-delta-sync-logic)
   - [8. Authentication, Session Restore \& Lock Engine](#8-authentication-session-restore--lock-engine)
   - [9. 2-Step Security Protocol (PIN -\> Biometrics)](#9-2-step-security-protocol-pin---biometrics)
@@ -79,6 +80,15 @@
       - [F. Display Name SQLite Migration](#f-display-name-sqlite-migration)
       - [G. Sync Stuck When Offline](#g-sync-stuck-when-offline)
     - [17.9 Dependencies Added](#179-dependencies-added)
+    - [17.10 Android Build Restoration \& Native NFC Audit (Critical)](#1710-android-build-restoration--native-nfc-audit-critical)
+      - [A. Root Cause: The native NFC module had NEVER compiled into any APK](#a-root-cause-the-native-nfc-module-had-never-compiled-into-any-apk)
+      - [B. Verification Method (APK forensics)](#b-verification-method-apk-forensics)
+      - [C. Misleading NFC Error Messages (Fixed)](#c-misleading-nfc-error-messages-fixed)
+      - [D. Fabric Crash Regression (`addViewAt ... child already has a parent`)](#d-fabric-crash-regression-addviewat--child-already-has-a-parent)
+      - [E. PIN-Submit Crash (Fabric mount/navigate race in `TransactionAuthScreen`)](#e-pin-submit-crash-fabric-mountnavigate-race-in-transactionauthscreen)
+      - [F. SQLite Reads Discarded the Primary Key (Notification \& Transaction Identity)](#f-sqlite-reads-discarded-the-primary-key-notification--transaction-identity)
+      - [G. Offline Receipt QR Only Existed on the Legacy QR Route](#g-offline-receipt-qr-only-existed-on-the-legacy-qr-route)
+      - [H. NFC Transfer UI Flow Correction](#h-nfc-transfer-ui-flow-correction)
   - [18. Known Issues \& Next Session TODO](#18-known-issues--next-session-todo)
     - [18.1 Transaction History Issue (Pending Fix)](#181-transaction-history-issue-pending-fix)
   - [19. Anti-Clone Dynamic Rolling QR Protocol \& 5-Retry Non-Refundable Settlement Engine](#19-anti-clone-dynamic-rolling-qr-protocol--5-retry-non-refundable-settlement-engine)
@@ -87,6 +97,7 @@
     - [19.3 Dual-Mode QR Architecture (Dynamic Anti-Clone vs Permanent QR)](#193-dual-mode-qr-architecture-dynamic-anti-clone-vs-permanent-qr)
     - [19.4 NFC Mobile-to-Mobile Architecture (Native Android HCE \& High-Speed ReaderMode Transceiver)](#194-nfc-mobile-to-mobile-architecture-native-android-hce--high-speed-readermode-transceiver)
     - [19.5 2-Way Offline QR Handshake (Reverse Receipt Scan for Instant Offline Receiver Settlement)](#195-2-way-offline-qr-handshake-reverse-receipt-scan-for-instant-offline-receiver-settlement)
+    - [19.6 5-Digit MFS PIN Normalization Bridge for Supabase Auth](#196-5-digit-mfs-pin-normalization-bridge-for-supabase-auth)
 
 ---
 
@@ -198,7 +209,7 @@
     │   └── use-theme.ts                     # Theme utility hook
     ├── services/                            # CORE SERVICES
     │   ├── api.ts                           # REST API client (login, register, checkReceiver, transfer w/ idempotency, getUser, getTransactions, getNotifications, verifyPin, safeParseJsonResponse)
-    │   ├── db.ts                            # Expo SQLite (4 tables: cached_user, cached_transactions, cached_notifications, pending_offline_transactions; epoch-based sorting, schema migrations, offline queue)
+    │   ├── db.ts                            # Expo SQLite (6 tables: cached_user, cached_transactions, cached_notifications, pending_offline_transactions, user_settings, used_qr_nonces; epoch-based sorting, schema migrations, offline queue, local-only row preservation)
     │   ├── sync.ts                          # SyncService background 15s delta sync manager (initialSync, deltaSync, subscribe/notify)
     │   ├── nfc.ts                           # NFC P2P transfer service (react-native-nfc-manager, NDEF write/read, nonce/txid generation)
     │   └── crypto.ts                        # RSA-2048 key generation & SecureStore management (node-forge)
@@ -319,6 +330,18 @@ CREATE TABLE IF NOT EXISTS user_settings (
 );
 ```
 
+### Table 6: `used_qr_nonces`
+```sql
+CREATE TABLE IF NOT EXISTS used_qr_nonces (
+  nonce TEXT PRIMARY KEY,        -- Burned QR nonce (replay protection)
+  scanned_at_epoch INTEGER,
+  sender TEXT,
+  receiver TEXT
+);
+```
+
+> **Local-only row preservation**: `saveCachedTransactions()` (full refresh) only deletes rows that originated from the server. On-device rows identified by the `LOCAL_ONLY_ID_PREFIXES` (`OFF-`, `FAIL-`, `SRV-`, `NFC-`, `PENALTY-`, `LOCAL-RECV-`) are preserved so offline queue / forfeiture / service entries survive every login. `getCachedTransactions()` additionally hides a local placeholder once the server has returned the canonical transaction for the same transfer (`dropSupersededLocalRows`), preventing duplicate rows in Recent Activity & History.
+
 > **PRAGMA settings**: `journal_mode = WAL`, `busy_timeout = 5000`. Schema migrations are applied at startup for existing databases (adding `created_at_epoch`, `username`, `display_name` columns).
 
 ---
@@ -326,8 +349,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
 ## 7. SyncService & Background Delta Sync Logic
 
 Located in `src/services/sync.ts`:
-- **`initialSync(username)`**: Downloads full dataset upon login and performs initial SQLite UPSERT.
-- **`deltaSync(username)`**: Queries SQLite for the latest `created_at` timestamp and passes `?since=<iso_timestamp>` to API endpoints. Only new or updated records are merged into SQLite using `INSERT OR REPLACE INTO`. Also flushes pending offline transactions to server.
+- **`initialSync(username)`**: Downloads full dataset upon login and performs initial SQLite UPSERT. Full transaction refresh preserves on-device rows (`OFF-`/`FAIL-`/`SRV-`/`NFC-`/`PENALTY-`/`LOCAL-RECV-`) so offline entries are not lost on every login.
+- **`deltaSync(username)`**: Queries SQLite for the latest `created_at` timestamp and passes `?since=<iso_timestamp>` to API endpoints (the backend `GET /transactions/:username` now honours `since`). Only new or updated records are merged into SQLite using `INSERT OR REPLACE INTO`. Also flushes pending offline transactions to server.
+- **Local placeholder reconciliation**: duplicates between an on-device placeholder row and the canonical server row are collapsed by `dropSupersededLocalRows` inside `getCachedTransactions()`, so the same transfer never appears twice in Recent Activity / History.
 - **`startBackgroundSync(username)`**: Runs an automatic 15-second timer (`setInterval`) + 14-minute health check timer.
 - **`subscribe(listener)`**: Emits events to update UI components reactively whenever SQLite changes.
 - **`forceSync(username)`**: Forces an immediate sync, bypassing the `isSyncing` guard. Called when app returns to foreground.
@@ -442,7 +466,7 @@ Base URL: `https://e-pay-fydp.onrender.com`
 - **`POST /login`**: Body: `{ username, password }` $\rightarrow$ `{ token, user }`.
 - **`POST /register`**: Body: `{ username, password, nid, activationCode }` $\rightarrow$ `{ success: true, ... }` (Status 201).
 - **`GET /user/:username`**: Headers: `Authorization: Bearer <token>` $\rightarrow$ `{ id, username, balance, ... }`.
-- **`GET /transactions/:username?since=<timestamp>`**: Returns `{ transactions: [...] }`.
+- **`GET /transactions/:username?since=<timestamp>`**: Returns `{ transactions: [...] }`. Now honours `?since=` (delta sync — only rows newer than the timestamp) and pages up to `TRANSACTIONS_PAGE_LIMIT` (default 500) instead of the previous hard `limit(20)` per direction. Results are sorted chronologically by parsed timestamp.
 - **`GET /notifications/:username?since=<timestamp>`**: Returns `{ notifications: [...] }`.
 - **`GET /check-receiver/:username`**: Headers: `Authorization: Bearer <token>` $\rightarrow$ `{ success: true }` or 404.
 - **`POST /transfer`**: Headers: `Authorization: Bearer <token>`, `X-Idempotency-Key: <uuid>`. Body: `{ username, receiver, amount, idempotencyKey }` $\rightarrow$ `{ status: "success", reference: "...", new_balance, today_spent }`.
@@ -1687,6 +1711,116 @@ All 5 payment flows (Send Money, Merchant Payment, Mobile Recharge, Bill Payment
 
 ---
 
+### 17.10 Android Build Restoration & Native NFC Audit (Critical)
+
+#### A. Root Cause: The native NFC module had NEVER compiled into any APK
+Three independent build blockers were stacked on top of each other, all hidden behind the generic Gradle message `Gradle build failed with unknown error`:
+
+1. **`apduservice.xml` AAPT error** — `android:description="DPT Offline P2P Payment"` is a literal string, but the `description` attribute requires a **string resource reference**. AAPT2 fails the `processReleaseResources` task:
+   ```
+   ERROR: apduservice.xml:6: AAPT: error: 'DPT Offline P2P Payment' is incompatible with attribute description (attr) reference.
+   ```
+   **Fix**: changed to `android:description="@string/app_name"`.
+
+2. **Kotlin compile errors in `DptHceModule.kt`** — React Native 0.86 converted `ReactContextBaseJavaModule` from Java to Kotlin. Kotlin only synthesises a `currentActivity` property from a Java getter; from a Kotlin-declared `getCurrentActivity()` it does not. All 6 usages failed with `Unresolved reference 'currentActivity'` (and cascading `runOnUiThread` / type-inference errors).
+   **Fix**: replaced with `reactContext.currentActivity` (the officially recommended replacement).
+
+3. **Toolchain mismatch** — build failed on `SDK location not found`, `java-25 ... does not provide the required capabilities: [JAVA_COMPILER]`, and 23 outdated Expo packages.
+   **Fix**: `ANDROID_HOME=$HOME/Android/sdk`, `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, and `npx expo install --fix`.
+
+> **Consequence**: because `android/` is committed, EAS skips `expo prebuild` and compiles the committed native sources. Any build including the custom HCE code failed at the AAPT stage — so **no shipped APK ever contained `DptHceModule`/`DptHceService`**. NFC transfer has therefore never worked in a released build.
+
+#### B. Verification Method (APK forensics)
+Confirm the native module is actually inside a built APK before field-testing:
+```bash
+# Service must be registered in the manifest
+unzip -p app.apk AndroidManifest.xml | strings -el | grep -E "DptHceService|HOST_APDU_SERVICE"
+# Class must exist in the dex
+for d in classes*.dex; do unzip -p app.apk $d | strings | grep -c DptHceModule; done
+```
+Result: the pre-fix APK reported `NOT FOUND` / `0`, the fixed APK reports the service, `HOST_APDU_SERVICE`, and 15 `DptHceModule` hits.
+
+#### C. Misleading NFC Error Messages (Fixed)
+A build without the native module made the **receiver show the normal "waiting for sender" screen** (`startHceReceiver` silently returned `false`) while the **sender reported "Receiver phone is not in active receive mode."** — implying the receiver was at fault when in fact the app had no card-emulation service at all.
+- `nfc-transfer.tsx` → `startReceiver()` now fails fast: if `startHceReceiver()` returns `false`, it shows *"NFC card emulation is unavailable in this build. Please reinstall the app."*
+- `nfc.ts` → `sendIsoDepPayment()` now throws an explicit error on Android when `DptHceModule` is absent, instead of falling through to the misleading `react-native-nfc-manager` fallback.
+
+#### D. Fabric Crash Regression (`addViewAt ... child already has a parent`)
+`enableScreens()` was inconsistent between the two entry points:
+- `index.ts` → `enableScreens(false)`
+- `src/app/_layout.tsx` → `enableScreens(true)` ← regressed in commit `829ff56`
+
+When `_layout.tsx` evaluates after `index.ts`, screens are re-enabled and the documented Fabric view-collision crash returns:
+```
+FATAL EXCEPTION: main
+java.lang.IllegalStateException: addViewAt: failed to insert view [...] into parent [...]
+Caused by: The specified child already has a parent. You must call removeView() on the child's parent first.
+```
+**Fix**: `src/app/_layout.tsx` restored to `enableScreens(false)` to match `index.ts` and section 17.1.
+
+#### E. PIN-Submit Crash (Fabric mount/navigate race in `TransactionAuthScreen`)
+Every payment flow funnels through `TransactionAuthScreen`, and its PIN-completion path fired **two conflicting UI updates in the same synchronous tick**:
+
+```ts
+setTimeout(() => {
+  setTimeout(() => {
+    setIsPinVerifying(false);  // ← mounts the dots container (swap of ActivityIndicator)
+    safeAuthorized();          // ← navigation that unmounts this screen
+  }, 300);
+});
+```
+That produces the Fabric signature `addViewAt: failed to insert view [...] into parent [...] / The specified child already has a parent`, because a child is being mounted (dots) while its parent screen is being torn down.
+
+Strongest evidence it was a bug rather than intentional: the sibling branch (`onVerifyPin` undefined) already did `stopAnimations()` → wait → `safeAuthorized()` with **no** `setIsPinVerifying(false)`. Only the branch used by every confirm screen carried the extra update.
+
+**Fix** (`TransactionAuthScreen.tsx`): removed the redundant `setIsPinVerifying(false)` from the navigation tick and flattened the nested zero-delay `setTimeout`. Now: `stopAnimations()` → 300 ms settle → `safeAuthorized()` alone on a clean task. Both branches are consistent.
+
+> **Status**: fix applied and built. Not yet verified on hardware — no device was attached to `adb` during the session, so the crash could not be reproduced locally. If it persists, capture the exact stack with:
+> `adb logcat -c && adb logcat | grep -E "AndroidRuntime|FATAL|SurfaceMountingManager|MountItemDispatcher"`
+
+#### F. SQLite Reads Discarded the Primary Key (Notification & Transaction Identity)
+`getCachedNotifications` and `getCachedTransactions` both selected **only** `raw_json`:
+
+```sql
+SELECT raw_json FROM cached_notifications WHERE username = ? ORDER BY created_at_epoch DESC
+```
+
+`raw_json` stores the **original server payload**. When the backend omits `id` (or names it differently), the stable SQLite primary key was thrown away and the mappers regenerated one on every read:
+
+```ts
+id: String(n.id || Math.random())   // notifications.tsx
+id: String(tx.id || Math.random())  // transactionMapper.ts
+```
+
+Consequences:
+- **Notification read-state never persisted.** `handleNotificationPress` saved the random id into `niropay_read_notifications_<user>`; the next read produced a *different* random id, so `localReadIds.includes(id)` was always false and rows reverted to unread.
+- **Every row remounted on every 15 s sync**, because React list keys changed on each read — visible flicker and unnecessary view churn (a Fabric re-parenting risk).
+- Same class of defect fed the documented transaction-history issue (18.1).
+
+**Fix**: both queries now also select the `id` column and merge it into the parsed object (`{ ...parsed, id: row.id }`), making the SQLite primary key authoritative and stable.
+
+#### G. Offline Receipt QR Only Existed on the Legacy QR Route
+The 2-way offline handshake (section 19.5) only worked for QR payments:
+
+| Flow | Processing screen | Offline receipt generated? |
+| :--- | :--- | :--- |
+| QR Pay | `transaction-processing.tsx` | ✅ yes |
+| Send Money / Merchant / Recharge / Bill | `TransactionProcessingView.tsx` | ❌ **missing** |
+
+`TransactionProcessingView` saved the pending offline transaction and navigated to `/transaction-result` **without** calling `generateOfflinePaymentReceipt` or passing `offlineReceipt`. So for those four flows the sender's screen had **no claim QR for the receiver to scan** — even though `my-qr.tsx` already exposes the "Scan Sender's Receipt QR" entry point.
+
+**Fix**: `TransactionProcessingView` now generates the signed receipt (`generateOfflinePaymentReceipt`) in its offline branch and forwards `isOffline: 'true'` + `offlineReceipt` to `/transaction-result`, matching `transaction-processing.tsx`.
+
+> **Note on the dual-QR flow**: the receiver-claim QR is intentionally produced **only when the sender's transfer is queued offline**. An online transfer settles through the server and the receiver is credited by normal delta-sync, so no claim QR is shown — not a bug, but it is why the QR "doesn't appear" on a successful online payment.
+
+#### H. NFC Transfer UI Flow Correction
+`nfc-transfer.tsx` previously asked for PIN + Biometric **before** the amount, so the authorisation screen always displayed `৳ 0.00`, and it rendered a second `Header` on top of the outer one.
+- Flow is now `choose → enter-amount → auth (PIN + Biometric) → waiting-tap → success/error`.
+- The outer `Header` is suppressed during the auth step so `TransactionAuthScreen` owns the header.
+- Removed the explicit `pinLength={8}` prop so the default 5-digit PIN is used.
+
+---
+
 ## 18. Known Issues & Next Session TODO
 
 ### 18.1 Transaction History Issue (Pending Fix)
@@ -1825,4 +1959,70 @@ All 5 payment flows (Send Money, Merchant Payment, Mobile Recharge, Bill Payment
        - Inserts incoming transaction in SQLite `cached_transactions` (`type: 'receive_money'`, `status: 'completed'`).
        - Enqueues to `pending_offline_transactions` for background delta sync reconciliation when internet reconnects.
        - Dispatches success alert and updates Dashboard in real-time with zero internet connectivity.
+
+---
+
+### 19.6 5-Digit MFS PIN Normalization Bridge for Supabase Auth
+- **Root Cause Solved**:
+  - The mobile app UI strictly enforces standard 5-digit Bangladeshi MFS PINs (`/^\d{5}$/`) across `create-password.tsx`, `login.tsx`, `quick-unlock.tsx`, and transaction approvals (`TransactionAuthScreen.tsx`).
+  - However, the backend server forwards authentication credentials directly to Supabase Auth GoTrue, which enforces a mandatory minimum password length of 6 characters (`Auth error: Password should be at least 6 characters.`).
+- **Cryptographic Solution (`src/services/api.ts`)**:
+  - Implemented deterministic `normalizeAuthPassword(pin)`:
+    ```typescript
+    export function normalizeAuthPassword(pin: string): string {
+      if (pin && pin.length === 5 && /^\d{5}$/.test(pin)) {
+        return `${pin}#dpt`;
+      }
+      return pin;
+    }
+    ```
+  - Appends a deterministic 4-character salt suffix (`#dpt`) when transmitting 5-digit PINs over TLS to `POST /register`, `POST /login`, and `verifyPin()`.
+  - Satisfies Supabase Auth's 6-character requirement (resulting in 9 characters) while allowing users to enter and confirm their native 5-digit PIN throughout the entire application.
+  - Local SQLite hash storage (`saveLocalPinHash`) continues hashing the native 5-digit PIN directly with hardware-isolated salted SHA-256.
+
+---
+
+## 20. Hybrid Transaction Envelope (HTE) Cryptographic Protocol
+
+### 20.1 Protocol Architecture & Cryptographic Primitives
+Based on the research paper: *"Hybrid Transaction Envelopes for Secure Daily Petty-Cash Transactions with Deferred Submission, Duress, and Batch Capabilities"*.
+
+1. **Key Separation & Hierarchy**:
+   - **Bank Server / Receiver**: Long-term NIST P-256 ECDH key pair $(SK_B^{dh}, PK_B^{dh})$ identified by `KeyID` (e.g., `hte-bank-ecdh-v1`).
+   - **Client Device**: Enrolled NIST P-256 ECDSA device key pair $(SK_U^{sig}, PK_U^{sig})$ created during account registration and stored in platform `SecureStore`.
+   - **Per-Transaction Ephemeral Key**: Client creates a fresh P-256 ECDH pair $(esk, ePK)$ for every payment.
+
+2. **Mathematical Construction**:
+   - **Payment Message**:
+     $$M = \{S, R, A, T, N, TxID\}$$
+   - **Ephemeral ECDH Agreement**:
+     $$Z = \text{ECDH}(esk, PK_B^{dh}) \quad \text{(32-byte shared X-coordinate)}$$
+   - **Context-Bound HKDF-SHA256 Key Derivation**:
+     $$\text{salt} = \text{SHA256}(\text{"HTE-v1-salt"} \parallel S \parallel TxID \parallel N)$$
+     $$PRK = \text{HKDF-Extract}(\text{salt}, Z)$$
+     $$\text{info} = \text{"HTE-v1/AES-256-GCM"} \parallel T \parallel ePK \parallel KeyID$$
+     $$K_T = \text{HKDF-Expand}(PRK, \text{info}, 32) \quad \text{(32-byte transaction AES key)}$$
+   - **Authenticated Encryption with Associated Data (AAD)**:
+     $$AAD = \{v: 1, S, T, N, TxID, KeyID, ePK\}$$
+     $$(C, Tag) = \text{AES-256-GCM}_{K_T}(IV, M, AAD) \quad \text{(96-bit random IV)}$$
+   - **Biometric-Gated Device Signature**:
+     $$Sig = \text{ECDSA-SHA256}_{SK_U^{sig}}(v \parallel KeyID \parallel ePK \parallel IV \parallel C \parallel Tag \parallel AAD)$$
+   - **Transmitted or Queued Package**:
+     $$P = \{v, KeyID, AAD, ePK, IV, C, Tag, Sig\}$$
+
+### 20.2 Receiver Validation Order (Backend / Server)
+Upon receipt of package $P$, the receiver strictly follows this ordered validation pipeline:
+1. **Version & KeyID Check**: Validates protocol version $v = 1$ and matching active $KeyID$.
+2. **Signature Verification**: Verifies the device ECDSA signature over the canonical envelope using sender's enrolled public key $PK_U^{sig}$.
+3. **Freshness & Syntax Policy**: Verifies timestamp $T$ policy, nonce $N$, and $TxID$ format.
+4. **Atomic Idempotency**: Rejects or idempotently returns previously committed $TxID$.
+5. **Key Agreement & Derivation**: Computes $Z = \text{ECDH}(SK_B^{dh}, ePK)$ and derives $K_T$ via identical HKDF parameters.
+6. **Decryption & Tag Check**: Verifies GCM $Tag$ against $AAD$ and decrypts payment message $M$.
+7. **Business Rules**: Validates amount, sender balance, daily limit, and receiver existence.
+8. **Atomic Commit**: Atomically updates account balances and commits unique $TxID$ in database.
+
+### 20.3 Deferred Offline Submission & Non-Duplication
+- If connectivity is lost during transfer execution, the exact signed package $P$ is stored in SQLite `pending_offline_transactions`.
+- When connectivity returns, `SyncService` submits the **exact same immutable package $P$ and $TxID$**.
+- Because the $TxID$ is cryptographically bound inside $AAD$, $C$, and $Sig$, retries cannot produce duplicate settlements.
 

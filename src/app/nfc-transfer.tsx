@@ -94,10 +94,10 @@ export default function NFCTransfer() {
     setNfcAvailable(available);
   };
 
-  // SEND: go to PIN + Biometric auth first
+  // SEND: enter amount first, then PIN + Biometric auth
   const handleSendPress = () => {
     setMode('send');
-    setStep('auth');
+    setStep('enter-amount');
   };
 
   // RECEIVE: wait for sender to tap
@@ -119,18 +119,20 @@ export default function NFCTransfer() {
     return await verifyPinLocally(user.username, pinInput);
   };
 
-  // After PIN + Biometric auth success
+  // After PIN + Biometric auth success → start the NFC transfer
   const handleAuthSuccess = () => {
+    const amountNum = parseFloat(amount);
+    setStep('waiting-tap');
+    paymentProcessedRef.current = false;
+    startSender(amountNum);
+  };
+
+  // Auth cancelled → back to amount entry
+  const handleAuthCancel = () => {
     setStep('enter-amount');
   };
 
-  // Auth cancelled
-  const handleAuthCancel = () => {
-    setStep('choose');
-    setMode(null);
-  };
-
-  // After entering amount, start NFC send
+  // After entering amount, go to PIN + Biometric auth
   const handleAmountSubmit = () => {
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {
@@ -152,9 +154,7 @@ export default function NFCTransfer() {
       );
       return;
     }
-    setStep('waiting-tap');
-    paymentProcessedRef.current = false; // Reset mutex
-    startSender(amountNum);
+    setStep('auth');
   };
 
   // NFC SEND (Phone-to-Phone IsoDep)
@@ -249,7 +249,7 @@ export default function NFCTransfer() {
         pollingIntervalRef.current = null;
       }
 
-      await saveLocalTransaction({ ...senderPayload, receiver: user!.username });
+      await saveLocalTransaction({ ...senderPayload, receiver: user!.username }, true);
 
       const newBalance = (user!.balance || 0) + senderPayload.amount;
       await updateUser({ ...user!, balance: newBalance });
@@ -284,6 +284,18 @@ export default function NFCTransfer() {
       // 1. Activate Native Android HCE (Card Emulation)
       const hceStarted = await startHceReceiver(user!.username);
       console.log('[NFC-Receiver] Native HCE started:', hceStarted);
+
+      // Fail fast with an actionable message instead of silently waiting forever
+      if (!hceStarted) {
+        setErrorMessage(
+          language === 'en'
+            ? 'NFC card emulation is unavailable in this build. Please reinstall the app.'
+            : 'এই বিল্ডে NFC কার্ড এমুলেশন নেই। অনুগ্রহ করে অ্যাপটি পুনরায় ইনস্টল করুন।'
+        );
+        setStep('error');
+        setIsProcessing(false);
+        return;
+      }
 
       // 2. Clear any existing listeners or polling
       if (hceSubRef.current) {
@@ -324,9 +336,13 @@ export default function NFCTransfer() {
     }
   };
 
-  const saveLocalTransaction = async (payload: NFCTransferPayload) => {
+  const saveLocalTransaction = async (payload: NFCTransferPayload, isPlaceholder = false) => {
+    // The receiver persists an instant local credit before the server knows about
+    // the transfer. Tag it as a placeholder so the canonical server row (which has
+    // a different UUID) supersedes it instead of showing up as a duplicate.
+    const localId = isPlaceholder ? `LOCAL-RECV-${payload.txid}` : payload.txid;
     const tx = {
-      id: payload.txid,
+      id: localId,
       sender_username: payload.sender,
       receiver_username: payload.receiver,
       amount: payload.amount,
@@ -399,7 +415,7 @@ export default function NFCTransfer() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
-      <Header title="NFC Transfer" />
+      {step !== 'auth' && <Header title="NFC Transfer" />}
 
       {/* STEP: Choose Send or Receive */}
       {step === 'choose' && (
@@ -487,12 +503,11 @@ export default function NFCTransfer() {
           amount={amount || '0'}
           onAuthorized={handleAuthSuccess}
           onCancel={handleAuthCancel}
-          pinLength={8}
           onVerifyPin={handleVerifyPin}
         />
       )}
 
-      {/* STEP: Enter Amount (Send only, after auth) */}
+      {/* STEP: Enter Amount (Send only) */}
       {step === 'enter-amount' && (
         <View style={styles.amountContainer}>
           <Text style={[styles.title, { color: theme.text }]}>

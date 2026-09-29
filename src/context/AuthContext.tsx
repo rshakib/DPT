@@ -154,19 +154,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthLoading(false);
   };
 
-  const updateUser = async (newUser: any) => {
+  const updateUser = React.useCallback(async (newUser: any) => {
     try {
       const canonicalUser = newUser?.user || newUser;
-      await SecureStore.setItemAsync(USER_KEY, JSON.stringify(canonicalUser));
-      setUser(canonicalUser);
-      if (canonicalUser?.username) {
-        await SecureStore.setItemAsync(LAST_LOGGED_IN_USER_KEY, canonicalUser.username);
-        setLastLoggedInUser(canonicalUser.username);
-      }
+      // Guard: skip if user data is identical (prevents unnecessary re-renders and
+      // double-deduction when the dashboard's sync subscriber fires with the same
+      // server balance that was already applied as an optimistic local deduction).
+      setUser((prev: any) => {
+        const prevJson = prev ? JSON.stringify(prev) : '';
+        const nextJson = canonicalUser ? JSON.stringify(canonicalUser) : '';
+        if (prevJson === nextJson) return prev; // no-op, same reference returned
+        // Persist asynchronously outside the reducer
+        SecureStore.setItemAsync(USER_KEY, nextJson).catch((e) =>
+          console.warn('Failed to persist user to SecureStore:', e)
+        );
+        if (canonicalUser?.username) {
+          SecureStore.setItemAsync(LAST_LOGGED_IN_USER_KEY, canonicalUser.username).catch(() => {});
+          setLastLoggedInUser(canonicalUser.username);
+        }
+        return canonicalUser;
+      });
     } catch (e) {
       console.warn('Failed to update secure session user:', e);
     }
-  };
+  }, []);
 
   const isAuthenticated = !!token;
 

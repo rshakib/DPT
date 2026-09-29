@@ -252,6 +252,14 @@ export async function sendIsoDepPayment(
     }
   }
 
+  // On Android, phone-to-phone HCE requires the native module.
+  // Without it the fallback cannot talk to the receiver and reports a misleading error.
+  if (Platform.OS === 'android' && !DptHceModule) {
+    throw new Error(
+      'NFC transfer requires the native DptHce module, which is missing from this build. Please reinstall the app.'
+    );
+  }
+
   // Method 2: Fallback via react-native-nfc-manager
   if (!NfcManager) {
     throw new Error('NFC is not available on this device.');

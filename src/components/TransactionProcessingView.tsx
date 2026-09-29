@@ -22,6 +22,7 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import * as db from '../services/db';
 import { syncService } from '../services/sync';
+import { generateOfflinePaymentReceipt } from '../services/crypto';
 
 import { generateUUID } from '../utils/security';
 
@@ -141,10 +142,32 @@ export function TransactionProcessingView({
       const isQr = type === 'qr_payment';
       const maxAttempts = isQr ? 5 : 1;
 
+      // Construct Hybrid Transaction Envelope (HTE)
+      let envelope: any = null;
+      try {
+        const keyInfo = await api.getServerKeyInfo();
+        if (keyInfo && keyInfo.publicKey) {
+          const { createHybridTransactionEnvelope } = require('../services/crypto');
+          envelope = await createHybridTransactionEnvelope({
+            sender: user.username,
+            receiver: cleanedReceiver,
+            amount: cleanedAmount,
+            txid: idempotencyKeyRef.current,
+            serverPublicKeyHex: keyInfo.publicKey,
+            keyId: keyInfo.keyId,
+          });
+          if (envelope) {
+            console.log('[HTE] Created signed transaction envelope for txid:', idempotencyKeyRef.current);
+          }
+        }
+      } catch (envErr) {
+        console.warn('[HTE] Could not build HTE envelope:', envErr);
+      }
+
       while (attempts < maxAttempts) {
         attempts++;
         try {
-          result = await api.transfer(user.username, cleanedReceiver, cleanedAmount, idempotencyKeyRef.current);
+          result = await api.transfer(user.username, cleanedReceiver, cleanedAmount, idempotencyKeyRef.current, envelope);
         } catch (netErr: any) {
           result = { success: false, message: netErr.message || 'Network connection failed' };
         }
@@ -218,9 +241,28 @@ export function TransactionProcessingView({
 
         if (isNetworkError) {
           const offlineRef = `OFF-${Math.floor(100000 + Math.random() * 900000)}`;
+          const nonce = `nonce-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+          // Signed offline receipt — the sender displays this as a QR so the
+          // receiver can claim the credit instantly without internet.
+          let offlineReceiptJson = '';
+          try {
+            const receipt = await generateOfflinePaymentReceipt(
+              user.username,
+              cleanedReceiver,
+              cleanedAmount,
+              offlineRef,
+              nonce
+            );
+            offlineReceiptJson = JSON.stringify(receipt);
+          } catch (rcptErr) {
+            console.warn('[OFFLINE_RECEIPT] Failed to generate signed receipt:', rcptErr);
+          }
+
           await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), offlineRef, {
             nonRefundable: isQr,
             retryCount: 0,
+            envelope,
           });
 
           const currentBal = parseFloat(user.balance || 0);
@@ -273,6 +315,8 @@ export function TransactionProcessingView({
               mobileNumber,
               operator,
               merchantName,
+              isOffline: 'true',
+              offlineReceipt: offlineReceiptJson,
             },
           });
           return;
@@ -342,7 +386,11 @@ export function TransactionProcessingView({
 
         const isServicePayment = type === 'mobile_recharge' || type === 'merchant_payment' || type === 'bill_payment';
         if (isServicePayment && (errorMsg.toLowerCase().includes('receiver') || errorMsg.toLowerCase().includes('not found'))) {
-          const serviceRef = `SRV-${Math.floor(100000 + Math.random() * 900000)}`;
+          // The backend exposes no merchant / recharge / bill endpoints, so these
+          // can never be confirmed server-side. Record them as an offline-queued
+          // transaction (never as a confirmed success) so History reports the real
+          // state and the background sync can still settle or refund them.
+          const serviceRef = `OFF-SRV-${Math.floor(100000 + Math.random() * 900000)}`;
           const currentBal = parseFloat(user.balance || 0);
           const newBal = Math.max(0, currentBal - cleanedAmount);
           const currentSpent = parseFloat(user.today_spent || 0);
@@ -353,6 +401,10 @@ export function TransactionProcessingView({
             balance: newBal,
             today_spent: newSpent,
           });
+
+          try {
+            await db.saveCachedUser(user.username, { ...user, balance: newBal, today_spent: newSpent });
+          } catch (e) {}
 
           const newTx = {
             id: serviceRef,
@@ -370,6 +422,10 @@ export function TransactionProcessingView({
           };
 
           await db.mergeCachedTransactions(user.username, [newTx]);
+          await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), serviceRef, {
+            retryCount: 0,
+          });
+          syncService.notifyDataChanged();
 
           safeReplace({
             pathname: '/transaction-result',
@@ -378,13 +434,14 @@ export function TransactionProcessingView({
               receiverUsername: cleanedReceiver,
               amount: cleanedAmount.toString(),
               referenceNo: serviceRef,
-              dateTime: new Date().toLocaleString(),
+              dateTime: `${new Date().toLocaleString()} (Offline Queued)`,
               type,
               billerName,
               billerAccountNo,
               mobileNumber,
               operator,
               merchantName,
+              isOffline: 'true',
             },
           });
           return;

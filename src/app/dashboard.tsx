@@ -81,7 +81,7 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const [errorOccurred, setErrorOccurred] = useState(false);
 
-  const fetchDashboardData = async (showPullToRefreshSpinner = false) => {
+  const fetchDashboardData = useCallback(async (showPullToRefreshSpinner = false) => {
     const activeUsername = user?.username;
     if (!activeUsername) {
       setBalanceLoading(false);
@@ -152,13 +152,15 @@ export default function Dashboard() {
         setTransactions(updatedTx.slice(0, 3));
       }
     } catch (err) {
-      setErrorOccurred(true);
+      // Only surface the error state when there is nothing cached to show. A failed
+      // background delta sync must not replace already-rendered cached activity.
+      if (!hasCachedData) setErrorOccurred(true);
     } finally {
       setBalanceLoading(false);
       setTransactionsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [user?.username, updateUser]);
 
   const navigation = useNavigation();
 
@@ -204,7 +206,7 @@ export default function Dashboard() {
       return () => {
         unsubscribe();
       };
-    }, [user?.username])
+    }, [fetchDashboardData, user?.username])
   );
 
   const handleToggleBalance = () => {
@@ -427,8 +429,10 @@ export default function Dashboard() {
                         {
                           color: mapped.isOfflinePending
                             ? theme.error
-                            : mapped.status.includes('Successful') || mapped.status.includes('সফল')
+                            : mapped.statusEnglish === 'Successful'
                             ? theme.success
+                            : mapped.statusEnglish === 'Pending'
+                            ? theme.textSecondary
                             : theme.error
                         }
                       ]}

@@ -101,7 +101,7 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
                 DptHceService.clearLastPayment()
             }
 
-            val activity = currentActivity
+            val activity = reactContext.currentActivity
             val component = ComponentName(reactContext, DptHceService::class.java)
 
             // Foreground service preference routing without disabling component in OS
@@ -150,7 +150,7 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun sendPaymentNative(payloadJson: String, promise: Promise) {
-        val activity = currentActivity
+        val activity = reactContext.currentActivity
         if (activity == null) {
             promise.reject("NO_ACTIVITY", "Current activity is null")
             return
@@ -348,7 +348,7 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun disableReaderModeSafe() {
-        val activity = currentActivity ?: return
+        val activity = reactContext.currentActivity ?: return
         activity.runOnUiThread {
             try {
                 val nfcAdapter = NfcAdapter.getDefaultAdapter(activity)
@@ -390,7 +390,7 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun isNfcEnabled(promise: Promise) {
         try {
-            val activity = currentActivity ?: reactContext
+            val activity = reactContext.currentActivity ?: reactContext
             val nfcAdapter = NfcAdapter.getDefaultAdapter(activity)
             promise.resolve(nfcAdapter?.isEnabled == true)
         } catch (e: Exception) {
@@ -467,7 +467,7 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
     // =========================================================================
 
     override fun onHostResume() {
-        val activity = currentActivity ?: return
+        val activity = reactContext.currentActivity ?: return
         if (DptHceService.isReceiverActive) {
             activity.runOnUiThread {
                 try {
@@ -486,7 +486,7 @@ class DptHceModule(private val reactContext: ReactApplicationContext) :
     }
 
     override fun onHostPause() {
-        val activity = currentActivity ?: return
+        val activity = reactContext.currentActivity ?: return
         activity.runOnUiThread {
             try {
                 val nfcAdapter = NfcAdapter.getDefaultAdapter(activity)

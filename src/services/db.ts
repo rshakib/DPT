@@ -14,6 +14,66 @@ function toEpoch(dateStr: any): number {
   }
 }
 
+// IDs that are generated on-device and never originate from the server.
+// A full cache refresh must keep them (the server has never seen them) and they
+// can only be reconciled once the matching canonical server row arrives.
+const LOCAL_ONLY_ID_PREFIXES = ['OFF-', 'FAIL-', 'SRV-', 'NFC-', 'PENALTY-', 'LOCAL-RECV-'];
+
+function isLocalOnlyId(id: unknown): boolean {
+  if (id === null || id === undefined) return false;
+  const str = String(id);
+  return LOCAL_ONLY_ID_PREFIXES.some((prefix) => str.startsWith(prefix));
+}
+
+// Only these local placeholders are dropped once the server returns the canonical
+// row. Outgoing queue rows (OFF-) are excluded on purpose: they are removed by the
+// sync flush on settlement, and hiding them here could mask a genuinely new
+// transfer of the same amount to the same receiver.
+const SUPERSEDABLE_LOCAL_PREFIXES = ['OFF-REC-', 'LOCAL-RECV-'];
+
+function isSupersedableLocalId(id: unknown): boolean {
+  if (id === null || id === undefined) return false;
+  const str = String(id);
+  return SUPERSEDABLE_LOCAL_PREFIXES.some((prefix) => str.startsWith(prefix));
+}
+
+const LOCAL_ONLY_WHERE = LOCAL_ONLY_ID_PREFIXES.map((p) => `id LIKE '${p}%'`).join(' OR ');
+
+const SUPERSEDE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function txSignature(tx: any): string {
+  const amount = Number(tx.amount || 0).toFixed(2);
+  const sender = String(tx.sender_username || tx.sender || '').toLowerCase();
+  const receiver = String(tx.receiver_username || tx.receiver || '').toLowerCase();
+  return `${sender}>${receiver}@${amount}`;
+}
+
+/**
+ * Hide on-device received-credit placeholders (offline NFC / QR receipts) once the
+ * server has returned the canonical transaction for the same transfer. Without
+ * this, the placeholder and its server counterpart both appear in Recent Activity
+ * / History as duplicates.
+ */
+function dropSupersededLocalRows(rows: any[]): any[] {
+  const candidates = rows.filter((r) => isSupersedableLocalId(r.id));
+  if (candidates.length === 0) return rows;
+
+  const serverRows = rows.filter((r) => !isLocalOnlyId(r.id));
+  if (serverRows.length === 0) return rows;
+
+  return rows.filter((row) => {
+    if (!isSupersedableLocalId(row.id)) return true;
+
+    return !serverRows.some((server) => {
+      if (txSignature(server) !== txSignature(row)) return false;
+      const rowTime = toEpoch(row.created_at || row.createdAt || row.timestamp);
+      const serverTime = toEpoch(server.created_at || server.createdAt || server.timestamp);
+      if (rowTime === 0 || serverTime === 0) return true;
+      return Math.abs(serverTime - rowTime) <= SUPERSEDE_WINDOW_MS;
+    });
+  });
+}
+
 /**
  * Ensures the SQLite database is opened and schema initialized.
  */
@@ -178,11 +238,23 @@ export async function getTodaySpent(username: string): Promise<number> {
 export async function getCachedTransactions(username: string): Promise<any[]> {
   try {
     const db = await getDb();
-    const rows = await db.getAllAsync<{ raw_json: string }>(
-      'SELECT raw_json FROM cached_transactions WHERE username = ? ORDER BY created_at_epoch DESC',
+    const rows = await db.getAllAsync<{ id: string; raw_json: string }>(
+      'SELECT id, raw_json FROM cached_transactions WHERE username = ? ORDER BY created_at_epoch DESC',
       [username]
     );
-    return rows.map((r) => JSON.parse(r.raw_json));
+    const parsedRows = rows.map((r) => {
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(r.raw_json);
+      } catch {
+        parsed = {};
+      }
+      // The raw server payload may omit an id (or use a different field name).
+      // Fall back to the SQLite primary key so React list keys stay stable across
+      // syncs instead of being regenerated on every read.
+      return { ...parsed, id: r.id ?? parsed.id };
+    });
+    return dropSupersededLocalRows(parsedRows);
   } catch (error) {
     console.warn('Failed to get cached transactions:', error);
     return [];
@@ -196,7 +268,13 @@ export async function saveCachedTransactions(username: string, transactions: any
   try {
     const db = await getDb();
     await db.withTransactionAsync(async () => {
-      await db.runAsync('DELETE FROM cached_transactions WHERE username = ?', [username]);
+      // Only replace rows that actually came from the server. Locally-generated
+      // rows (offline queue / forfeitures / service placeholders) must survive a
+      // full refresh or they vanish from Recent Activity & History on every login.
+      await db.runAsync(
+        `DELETE FROM cached_transactions WHERE username = ? AND NOT (${LOCAL_ONLY_WHERE})`,
+        [username]
+      );
       for (const tx of transactions) {
         const id = String(tx.id || tx.reference || tx.referenceNo || Math.random());
         const amount = Number(tx.amount || 0);
@@ -225,11 +303,23 @@ export async function saveCachedTransactions(username: string, transactions: any
 export async function getCachedNotifications(username: string): Promise<any[]> {
   try {
     const db = await getDb();
-    const rows = await db.getAllAsync<{ raw_json: string }>(
-      'SELECT raw_json FROM cached_notifications WHERE username = ? ORDER BY created_at_epoch DESC',
+    const rows = await db.getAllAsync<{ id: string; raw_json: string }>(
+      'SELECT id, raw_json FROM cached_notifications WHERE username = ? ORDER BY created_at_epoch DESC',
       [username]
     );
-    return rows.map((r) => JSON.parse(r.raw_json));
+    return rows.map((r) => {
+      let parsed: any = {};
+      try {
+        parsed = JSON.parse(r.raw_json);
+      } catch {
+        parsed = {};
+      }
+      // Without this, notifications lacking a server-side id get a fresh
+      // Math.random() id on every read — which both breaks the "mark as read"
+      // persistence (the stored id never matches again) and forces React to
+      // remount every row on each 15s sync.
+      return { ...parsed, id: r.id ?? parsed.id };
+    });
   } catch (error) {
     console.warn('Failed to get cached notifications:', error);
     return [];
@@ -388,7 +478,7 @@ export async function savePendingOfflineTransaction(
   amount: number,
   type: string,
   reference: string,
-  options?: { nonRefundable?: boolean; retryCount?: number }
+  options?: { nonRefundable?: boolean; retryCount?: number; envelope?: any }
 ): Promise<void> {
   try {
     const db = await getDb();
@@ -406,6 +496,7 @@ export async function savePendingOfflineTransaction(
       createdAt,
       retryCount,
       nonRefundable,
+      envelope: options?.envelope,
     };
 
     await db.runAsync(

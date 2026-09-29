@@ -36,7 +36,6 @@
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-    "newArchEnabled": false,
     "plugins": [
       "expo-router",
       [
@@ -68,7 +67,7 @@
             "compileSdkVersion": 36,
             "targetSdkVersion": 35,
             "buildToolsVersion": "35.0.0",
-            "newArchEnabled": false
+            "newArchEnabled": true
           }
         }
       ],
@@ -77,7 +76,9 @@
         {
           "nfcPermission": "Allow DPT to use NFC for contactless money transfers."
         }
-      ]
+      ],
+      "expo-image",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -86,9 +87,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "e2119d94-e0a6-49db-9667-e50799ba7a38"
+        "projectId": "ba013f1f-c849-4f48-b8e5-2d26635750c8"
       }
     },
-    "owner": "riajulhasanshakib"
+    "owner": "shakib223"
   }
 }

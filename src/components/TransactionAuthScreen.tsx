@@ -273,34 +273,23 @@ export function TransactionAuthScreen({
             const result = await onVerifyPin(nextPin);
             if (!isMounted.current) return;
             if (result.success) {
-              console.log('[DIAGNOSTIC] 2. PIN verification succeeded!', {
-                summaryTitle,
-                summarySubtitle,
-                amount,
-              });
-              console.log('================ [DIAGNOSTIC TEST START] ================');
-              console.log('✅ [CHECK 1/4] Biometric/Keymaster state verified.');
-              console.log('✅ [CHECK 2/4] PIN verification succeeded locally.');
-              console.log('🔄 [CHECK 3/4] Halting native driver animations (pulseAnim/rotationAnim)...');
+              // Halt native-driver animations before touching the view tree.
               stopAnimations();
-              console.log('✅ [CHECK 3/4 PASSED] Native animation nodes safely detached.');
-              console.log('⏳ [CHECK 4/4] Activating 300ms layout barrier for Fabric...');
 
+              // Wait for the animation detach to settle, then navigate on a clean frame.
+              // NOTE: do NOT setIsPinVerifying(false) here — that mounts the dots container
+              // in the same tick as the navigation that unmounts this screen, which causes
+              // Fabric's "addViewAt: ... child already has a parent" crash.
               setTimeout(() => {
-                setTimeout(() => {
-                  if (!isMounted.current) return;
-                  setIsPinVerifying(false);
-                  console.log('🚀 [CHECK 4/4 PASSED] UI thread settled. Executing safe screen transition.');
-                  console.log('================ [DIAGNOSTIC TEST COMPLETE] ================');
+                if (!isMounted.current) return;
 
-                  Sentry.addBreadcrumb({
-                    category: 'auth',
-                    message: 'Executing onAuthorized navigation callback',
-                    level: 'info',
-                  });
-                  safeAuthorized();
-                }, 300);
-              });
+                Sentry.addBreadcrumb({
+                  category: 'auth',
+                  message: 'Executing onAuthorized navigation callback',
+                  level: 'info',
+                });
+                safeAuthorized();
+              }, 300);
             } else {
               Sentry.addBreadcrumb({
                 category: 'auth',
@@ -321,12 +310,10 @@ export function TransactionAuthScreen({
         } else {
           stopAnimations();
           setTimeout(() => {
-            setTimeout(() => {
-              if (isMounted.current) {
-                safeAuthorized();
-              }
-            }, 300);
-          });
+            if (isMounted.current) {
+              safeAuthorized();
+            }
+          }, 300);
         }
       }
     }

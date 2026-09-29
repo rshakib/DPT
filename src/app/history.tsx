@@ -121,7 +121,9 @@ export default function History() {
   // Helper to filter transactions by date range
   const isWithinDateFilter = (filter: DateFilter, timestampMs?: number): boolean => {
     if (filter === 'all') return true;
-    if (!timestampMs) return false;
+    // A row with an unparseable date cannot be placed on the calendar. Keep it in
+    // the wide ranges instead of silently dropping it from the list.
+    if (!timestampMs) return filter === '7days' || filter === '30days';
 
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -361,6 +363,7 @@ export default function History() {
         >
           {filteredTx.map((tx) => {
             const isTxSuccess = tx.statusEnglish === 'Successful';
+            const isTxPending = tx.statusEnglish === 'Pending';
             const isOffline = tx.isOfflinePending;
             
             return (
@@ -412,6 +415,8 @@ export default function History() {
                         ? (isDarkMode ? 'rgba(255, 56, 56, 0.15)' : 'rgba(255, 56, 56, 0.08)')
                         : isTxSuccess
                         ? 'rgba(9, 196, 135, 0.08)'
+                        : isTxPending
+                        ? 'rgba(255, 149, 0, 0.10)'
                         : 'rgba(255, 56, 56, 0.08)'
                     }
                   ]}>
@@ -422,6 +427,8 @@ export default function History() {
                            ? theme.error
                            : isTxSuccess
                            ? theme.success
+                           : isTxPending
+                           ? theme.textSecondary
                            : theme.error
                        }
                     ]}>

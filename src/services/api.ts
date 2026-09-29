@@ -53,23 +53,41 @@ export async function healthCheck(): Promise<boolean> {
   }
 }
 
+export interface ServerKeyInfo {
+  publicKey: string;
+  keyId: string;
+  rsaPublicKey?: string;
+}
+
 /**
- * Fetch the server's RSA public key for envelope encryption.
+ * Fetch the server's ECDH P-256 public key and KeyID for Hybrid Transaction Envelopes.
  */
-export async function getServerPublicKey(): Promise<string | null> {
+export async function getServerKeyInfo(): Promise<ServerKeyInfo | null> {
   try {
     const response = await fetch(`${BASE_URL}/server-public-key`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
     const json = await response.json();
-    if (response.ok && json.public_key) {
-      return json.public_key;
+    if (response.ok && (json.ecdh_public_key || json.public_key)) {
+      return {
+        publicKey: json.ecdh_public_key || json.public_key,
+        keyId: json.key_id || json.KeyID || 'hte-bank-ecdh-v1',
+        rsaPublicKey: json.rsa_public_key,
+      };
     }
     return null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Fetch the server's public key (legacy string return).
+ */
+export async function getServerPublicKey(): Promise<string | null> {
+  const info = await getServerKeyInfo();
+  return info ? info.publicKey : null;
 }
 
 // Helper for crash-proof JSON parsing from raw HTTP response
@@ -87,13 +105,26 @@ async function safeParseJsonResponse(response: Response): Promise<{ success: boo
   }
 }
 
+/**
+ * Normalizes user PIN for Supabase Auth compatibility.
+ * Supabase Auth strictly enforces a minimum of 6 characters for user passwords.
+ * For 5-digit numeric PINs, appends a deterministic salt suffix so Supabase accepts it,
+ * allowing users to enter native 5-digit PINs seamlessly in the app.
+ */
+export function normalizeAuthPassword(pin: string): string {
+  if (pin && pin.length === 5 && /^\d{5}$/.test(pin)) {
+    return `${pin}#dpt`;
+  }
+  return pin;
+}
+
 // 1. login(username, password)
 export async function login(username: string, password: string): Promise<ApiResult<any>> {
   try {
     const response = await fetch(`${BASE_URL}/login`, {
       method: 'POST',
       headers: await getHeaders(false),
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password: normalizeAuthPassword(password) }),
     });
 
     const parsed = await safeParseJsonResponse(response);
@@ -141,6 +172,7 @@ export async function register(
   activationCode: string,
   extraFields?: {
     rsaPublicKey?: string;
+    ecdsaPublicKey?: string;
     fullName?: string;
     mobile?: string;
     email?: string;
@@ -151,11 +183,16 @@ export async function register(
     const cleanUsername = username.toLowerCase().trim();
     const payload: Record<string, any> = {
       username: cleanUsername,
-      password,
+      password: normalizeAuthPassword(password),
       nid,
       activationCode,
     };
     if (extraFields?.rsaPublicKey) payload.rsaPublicKey = extraFields.rsaPublicKey;
+    if (extraFields?.ecdsaPublicKey) {
+      payload.ecdsaPublicKey = extraFields.ecdsaPublicKey;
+      payload.ecdsa_public_key = extraFields.ecdsaPublicKey;
+      if (!payload.rsaPublicKey) payload.rsaPublicKey = extraFields.ecdsaPublicKey;
+    }
     if (extraFields?.fullName) payload.fullName = extraFields.fullName;
     if (extraFields?.mobile) payload.mobile = extraFields.mobile;
     if (extraFields?.email) payload.email = extraFields.email;
@@ -209,18 +246,22 @@ export async function checkReceiver(username: string): Promise<ApiResult<any>> {
   }
 }
 
-// 4. transfer(username, receiver, amount, idempotencyKey?)
+// 4. transfer(username, receiver, amount, idempotencyKey?, envelope?)
 export async function transfer(
   username: string,
   receiver: string,
   amount: number,
-  idempotencyKey?: string
+  idempotencyKey?: string,
+  envelope?: any
 ): Promise<ApiResult<any>> {
   try {
     const payload: Record<string, any> = { username, receiver, amount };
     if (idempotencyKey) {
       payload.idempotencyKey = idempotencyKey;
       payload.idempotency_key = idempotencyKey;
+    }
+    if (envelope) {
+      payload.envelope = envelope;
     }
     const headers = await getHeaders(true);
     if (idempotencyKey) {
@@ -253,6 +294,44 @@ export async function transfer(
     }
   } catch (error: any) {
     return { success: false, message: error.message || 'Network connection failed' };
+  }
+}
+
+/**
+ * Executes a secure transfer using the paper's Hybrid Transaction Envelope (HTE):
+ * Ephemeral P-256 ECDH + HKDF-SHA256 + AES-256-GCM + Biometric-Authorized ECDSA.
+ * Falls back to standard transfer if the server public key is unavailable.
+ */
+export async function transferWithHTE(
+  username: string,
+  receiver: string,
+  amount: number,
+  txid?: string
+): Promise<ApiResult<any>> {
+  try {
+    const finalTxId = txid || `TX-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+    const keyInfo = await getServerKeyInfo();
+
+    if (keyInfo && keyInfo.publicKey) {
+      const { createHybridTransactionEnvelope } = require('./crypto');
+      const envelope = await createHybridTransactionEnvelope({
+        sender: username,
+        receiver,
+        amount,
+        txid: finalTxId,
+        serverPublicKeyHex: keyInfo.publicKey,
+        keyId: keyInfo.keyId,
+      });
+
+      if (envelope) {
+        return await transfer(username, receiver, amount, finalTxId, envelope);
+      }
+    }
+
+    // Fallback to standard transfer
+    return await transfer(username, receiver, amount, finalTxId);
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Transfer failed' };
   }
 }
 
@@ -347,7 +426,7 @@ export async function verifyPin(username: string, pin: string): Promise<ApiResul
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ username, password: pin }),
+      body: JSON.stringify({ username, password: normalizeAuthPassword(pin) }),
     });
 
     const parsed = await safeParseJsonResponse(response);
