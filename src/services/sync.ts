@@ -163,6 +163,11 @@ class SyncService {
       const latestTxTime = await db.getLatestCachedTransactionTimestamp(username);
       console.log(`[SYNC SERVICE] Snapshot latestTxTime (pre-flush): ${latestTxTime}`);
 
+      // Snapshot the notification cursor BEFORE the offline flush too: the flush
+      // merges local rows with created_at = now, which would otherwise push the
+      // ?since= cursor past the server notification for the same event.
+      const latestNotifTime = await db.getLatestCachedNotificationTimestamp(username);
+
       // Track which OFF- IDs we successfully settle so we can clean them up after merge.
       const settledOfflineIds: string[] = [];
 
@@ -382,9 +387,8 @@ class SyncService {
         }
       }
 
-      // 3. Notification delta sync using latest timestamp
-      const latestNotifTime = await db.getLatestCachedNotificationTimestamp(username);
-      console.log(`[SYNC SERVICE] Latest cached notification timestamp in SQLite: ${latestNotifTime}`);
+      // 3. Notification delta sync using the PRE-FLUSH cursor snapshot
+      console.log(`[SYNC SERVICE] Using pre-flush latestNotifTime: ${latestNotifTime}`);
       const notifRes = await api.getNotifications(username, latestNotifTime || undefined);
       if (notifRes.success && Array.isArray(notifRes.data) && notifRes.data.length > 0) {
         console.log(`[SYNC SERVICE] Received ${notifRes.data.length} new/updated notifications, merging into SQLite`);

@@ -86,13 +86,9 @@ export default function Notifications() {
     let loginSeen = false;
     const filteredList = rawList.filter((n: any) => {
       const typeLower = String(n.notification_type || n.type || '').toLowerCase();
-      const titleLower = String(n.title || '').toLowerCase();
-      const messageLower = String(n.message || n.body || '').toLowerCase();
-      const isLoginNotif =
-        typeLower.includes('login') ||
-        titleLower.includes('login') ||
-        messageLower.includes('logged in') ||
-        messageLower.includes('login');
+      // Only notifications explicitly typed as login are de-duplicated — matching
+      // the substring "login" in arbitrary titles/messages wrongly dropped alerts.
+      const isLoginNotif = typeLower.includes('login');
 
       if (isLoginNotif) {
         if (!loginSeen) {

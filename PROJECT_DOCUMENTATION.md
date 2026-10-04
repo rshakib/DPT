@@ -2102,3 +2102,23 @@ Upon receipt of package $P$, the receiver strictly follows this ordered validati
 - **Fallback**: if the native module is absent (iOS/web/older build) or a sign fails, it uses the software SecureStore key — the app keeps working. A hardware sign failure never falls back to a *different* key (that would break server verification) — it degrades to a non-HTE transfer instead.
 - **Requires a new APK build** (native code) and on-device testing; cannot be verified in a headless environment.
 
+---
+
+## Deviations from the HTE paper (v2) — scope
+
+The reference implementation matches §III (envelope), §III-A (duress via key separation +
+`L_D` + silent risk), the online receiver checks, and epoch key-rotation metadata. The
+following is **out of scope**:
+
+- **§IV-A SE-based reserved-value offline settlement with immediate finality** — online
+  reservation (`ResW`, Eq. 11), secure-element wallet, OWC/VTR/abort proofs, and the
+  per-transfer SE state machines (Figs. 3–4). Implementing it requires an issuer-controlled
+  secure-element applet plus OEM/MNO provisioning; iOS SE is vendor-controlled.
+- **Instead**, offline uses the **deferred-submission** model: the signed envelope `P`
+  (Eqs. 1–10) is built offline and handed to the payee (QR/NFC); the payee relays the same
+  `P` to `POST /transfer/claim`, and settlement is server-side and receiver-authoritative
+  (exactly-once via TxID). The offline receipt QR is single-use and expires after
+  `CLAIM_MAX_AGE_SECONDS` (default 60 s).
+- Multi-`KeyID` epoch rotation is supported server-side (retired-but-valid KeyIDs within
+  the grace window are accepted); the scheduled rotation itself is operational.
+

@@ -400,7 +400,7 @@ export async function getCachedNotifications(username: string): Promise<any[]> {
   try {
     const db = await getDb();
     const rows = await db.getAllAsync<{ id: string; raw_json: string }>(
-      'SELECT id, raw_json FROM cached_notifications WHERE username = ? ORDER BY created_at_epoch DESC',
+      'SELECT id, raw_json FROM cached_notifications WHERE username = ? ORDER BY created_at_epoch DESC LIMIT 500',
       [username]
     );
     return rows.map((r) => {
