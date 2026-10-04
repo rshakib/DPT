@@ -5,6 +5,7 @@ import * as api from '../services/api';
 import * as db from '../services/db';
 import { syncService } from '../services/sync';
 import { saveLocalPinHash, clearLocalPinHash, DURESS_LIMIT_DEFAULT } from '../utils/security';
+import { generateDeviceECDSAKeyPair } from '../services/crypto';
 
 const TOKEN_KEY = 'niropay_token';
 const USER_KEY = 'niropay_user';
@@ -166,6 +167,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLastLoggedInUser(canonicalUser.username);
       setIsDuressMode(false);
       setIsAuthLoading(false);
+
+      // Re-enroll this device's signing key so the server always has the current
+      // one (fixes "Biometric device signature verification failed" after a
+      // reinstall / keystore key regeneration). Best-effort.
+      try {
+        const normal = await generateDeviceECDSAKeyPair();
+        const duress = await generateDeviceECDSAKeyPair(true);
+        if (normal?.success && normal.publicKeyHex) {
+          await api.registerDeviceKey(normal.publicKeyHex, duress?.success ? duress.publicKeyHex : undefined);
+        }
+      } catch (e) {
+        console.warn('Device key re-enrolment failed:', e);
+      }
 
       // Trigger initial data sync & start background sync service
       syncService.initialSync(canonicalUser.username);

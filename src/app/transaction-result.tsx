@@ -303,7 +303,7 @@ export default function TransactionResult() {
             <View style={styles.offlineCardHeader}>
               <Ionicons name="qr-code" size={20} color={theme.primary} />
               <Text style={[styles.offlineCardTitle, { color: theme.text }]}>
-                {language === 'en' ? 'Instant Offline Receiver Credit' : 'প্রাপককে তাৎক্ষণিক অফলাইন টাকা দিন'}
+                {language === 'en' ? 'Offline Receiver Claim' : 'প্রাপকের অফলাইন দাবি'}
               </Text>
             </View>
             {receiptSecondsLeft <= 0 ? (
@@ -320,8 +320,8 @@ export default function TransactionResult() {
               <>
                 <Text style={[styles.offlineCardSubtitle, { color: theme.textSecondary }]}>
                   {language === 'en'
-                    ? `Ask @${receiverUsername} to scan this QR code with their DPT app to claim ৳${amount} instantly offline.`
-                    : `প্রাপক @${receiverUsername}-কে তার DPT অ্যাপ দিয়ে এই কিউআরটি স্ক্যান করতে বলুন যাতে তিনি অফলাইনেই সাথে সাথে ৳${amount} পেয়ে যান।`}
+                    ? `Ask @${receiverUsername} to scan this QR to claim ৳${amount}. It settles server-side once the payee is online.`
+                    : `প্রাপক @${receiverUsername}-কে এই কিউআর স্ক্যান করতে বলুন। প্রাপক অনলাইনে এলে দাবিটি সার্ভারে settle হবে।`}
                 </Text>
                 <View style={styles.qrWrapper}>
                   <QRCode

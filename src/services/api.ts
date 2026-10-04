@@ -117,10 +117,10 @@ export function isServerKeyFresh(info: ServerKeyInfo | null): boolean {
  * re-synchronize online and must NOT construct further envelopes offline.
  */
 export function isOfflineEnvelopeAllowed(info: ServerKeyInfo | null): boolean {
-  // Paper §4.1: envelope creation requires a *valid* cached key — neither revoked
-  // nor past its local cache lifetime τ_cache. Once τ_cache elapses the client must
-  // refresh the record online before constructing further envelopes.
-  return !!info && !!info.publicKey && !info.forceOnlineResync && isServerKeyFresh(info);
+  // Paper §IV-A: envelope creation requires a *valid* cached key — not revoked,
+  // not force-resynced, and within its local cache lifetime τ_cache. Once revoked
+  // or τ_cache elapses the client must refresh online before further envelopes.
+  return !!info && !!info.publicKey && !info.forceOnlineResync && !info.revokedAt && isServerKeyFresh(info);
 }
 
 /**
@@ -297,6 +297,33 @@ export async function register(
 }
 
 // 3. checkReceiver(username)
+/**
+ * Re-enroll the device signing public key(s) with the server (paper §III).
+ * Called after login so the server always has the current device's key — fixes
+ * "Biometric device signature verification failed" after a reinstall / keystore
+ * key regeneration.
+ */
+export async function registerDeviceKey(normalPublicKey: string, duressPublicKey?: string): Promise<ApiResult<any>> {
+  try {
+    const response = await fetchWithTimeout(`${BASE_URL}/device-key`, {
+      method: 'POST',
+      headers: await getHeaders(true),
+      body: JSON.stringify({ normalPublicKey, duressPublicKey }),
+    });
+    const parsed = await safeParseJsonResponse(response);
+    if (!parsed.success) {
+      return { success: false, message: parsed.message, status: parsed.status };
+    }
+    const json = parsed.json;
+    if (response.ok) {
+      return { success: true, data: json };
+    }
+    return { success: false, message: json.error || json.message || 'Device key enrollment failed', status: response.status };
+  } catch (error: any) {
+    return { success: false, message: error.message || 'Network connection failed' };
+  }
+}
+
 export async function checkReceiver(username: string): Promise<ApiResult<any>> {
   try {
     const response = await fetchWithTimeout(`${BASE_URL}/check-receiver/${username}`, {

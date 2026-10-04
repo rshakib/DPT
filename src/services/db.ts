@@ -429,7 +429,9 @@ export async function saveCachedNotifications(username: string, notifications: a
   try {
     const db = await getDb();
     await db.withTransactionAsync(async () => {
-      await db.runAsync('DELETE FROM cached_notifications WHERE username = ?', [username]);
+      // Keep on-device notifications (local settlements / refunds / penalties) — the
+      // server has never seen them; only replace rows that came from the server.
+      await db.runAsync("DELETE FROM cached_notifications WHERE username = ? AND id NOT LIKE 'notif-%'", [username]);
       for (const notif of notifications) {
         const id = String(
           notif.id ||
@@ -571,6 +573,8 @@ export async function clearUserCache(username: string): Promise<void> {
       await db.runAsync('DELETE FROM cached_notifications WHERE username = ?', [username]);
       await db.runAsync('DELETE FROM pending_offline_transactions WHERE username = ?', [username]);
     });
+    // Also clear the device-local notification read-state so it can't leak across users.
+    await SecureStore.deleteItemAsync(`niropay_read_notifications_${username}`).catch(() => {});
   } catch (error: any) {
     console.warn('Failed to clear user cache:', error);
   }

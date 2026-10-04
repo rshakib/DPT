@@ -109,7 +109,12 @@ export default function Notifications() {
     // newest (list is already ordered newest-first).
     const seenNotif = new Set<string>();
     const dedupedList = filteredList.filter((n: any) => {
-      const key = `${String(n.title || '')}||${String(n.message || n.body || '')}`;
+      // Dedup by the DB key (id, or title|message|created_at) — matching the SQLite
+      // key, so two distinct events with the same text are NOT collapsed.
+      const key = String(
+        n.id ||
+          `${String(n.title || '')}|${String(n.message || n.body || '')}|${String(n.created_at || n.createdAt || '')}`
+      );
       if (seenNotif.has(key)) return false;
       seenNotif.add(key);
       return true;

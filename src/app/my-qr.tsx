@@ -555,8 +555,8 @@ export default function MyQR() {
             </Text>
             <Text style={[styles.scanSenderSubtitle, { color: theme.textSecondary }]}>
               {language === 'en'
-                ? 'Claim instant offline money credit on your phone'
-                : 'অফলাইনেই আপনার অ্যাকাউন্টে সাথে সাথে টাকা জমা নিন'}
+                ? 'Scan the sender\'s receipt to claim (settles online)'
+                : 'প্রেরকের পেমেন্ট দাবি করতে স্ক্যান করুন (অনলাইনে settle হবে)'}
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />

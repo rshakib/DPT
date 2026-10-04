@@ -268,18 +268,22 @@ class SyncService {
                 continue;
               }
 
-              // Server rejected the transaction (e.g. receiver invalid or error).
+              // Server rejected the transaction.
+              const isPermanent =
+                errorMsg.includes('receiver not found') || errorMsg.includes('not found') ||
+                errorMsg.includes('invalid') || errorMsg.includes('not allowed') ||
+                errorMsg.includes('forbidden') || errorMsg.includes('limit exceeded');
               const currentRetry = (offlineItem.retryCount || 0) + 1;
 
-              if (currentRetry < 5) {
+              if (!isPermanent && currentRetry < 5) {
                 console.log(`[SYNC SERVICE] Offline transaction ${offlineItem.id} failed attempt ${currentRetry}/5. Will retry after backoff.`);
                 await db.updatePendingOfflineTransactionRetry(offlineItem.id, currentRetry);
                 continue;
               }
 
-              // Retry budget exhausted -> receiver-authoritative rejection + refund.
+              // Retry budget exhausted -> receiver-authoritative rejection.
               // Paper §4.1 defines no ad-hoc "permanent forfeiture" rule.
-              console.warn(`[SYNC SERVICE] Offline transaction ${offlineItem.id} rejected after 5 retries. Refunding.`);
+              console.warn(`[SYNC SERVICE] Offline transaction ${offlineItem.id} rejected (${isPermanent ? 'permanent' : 'retries exhausted'}). Dropping.`);
               await db.removePendingOfflineTransaction(offlineItem.id);
 
               try {
@@ -289,22 +293,10 @@ class SyncService {
                 console.warn('[SYNC SERVICE] Failed to delete offline tx from cache:', delErr);
               }
 
-              // REFUND: restore the locally deducted balance
-              try {
-                const cachedUser = await db.getCachedUser(username);
-                if (cachedUser) {
-                  const currentBalance = Number(cachedUser.balance || 0);
-                  const currentSpent = Number(cachedUser.today_spent || cachedUser.todaySpent || 0);
-                  const refundAmount = Number(offlineItem.amount || 0);
-
-                  cachedUser.balance = currentBalance + refundAmount;
-                  cachedUser.today_spent = Math.max(0, currentSpent - refundAmount);
-                  await db.saveCachedUser(username, cachedUser);
-                  console.log(`[SYNC SERVICE] Refunded ৳${refundAmount} to ${username}. New balance: ${cachedUser.balance}`);
-                }
-              } catch (refundErr) {
-                console.warn('[SYNC SERVICE] Failed to refund balance:', refundErr);
-              }
+              // No local refund: offline sends are NOT debited locally (the queued
+              // row is 'pending' and the balance changes only via server sync), so a
+              // failed item leaves the balance untouched. Refunding here would wrongly
+              // inflate the local balance.
 
               // Record the FAIL- row
               try {
@@ -327,19 +319,19 @@ class SyncService {
                 console.warn('[SYNC SERVICE] Failed to update transaction status:', txErr);
               }
 
-              const refundNotif = {
-                id: `notif-refund-${Date.now()}`,
-                title: 'অফলাইন লেনদেন ব্যর্থ - টাকা ফেরত',
-                message: `@${offlineItem.receiver}-এ ৳${offlineItem.amount} টাকা পাঠানো যায়নি। আপনার ব্যালেন্স পুনরুদ্ধার করা হয়েছে।`,
+              const failNotif = {
+                id: `notif-fail-${Date.now()}`,
+                title: 'অফলাইন লেনদেন ব্যর্থ',
+                message: `@${offlineItem.receiver}-এ ৳${offlineItem.amount} টাকা পাঠানো যায়নি।`,
                 notification_type: 'security',
                 created_at: new Date().toISOString(),
               };
-              await db.mergeCachedNotifications(username, [refundNotif]);
+              await db.mergeCachedNotifications(username, [failNotif]);
               hasChanges = true;
 
               const failAlert = {
                 title: 'অফলাইন লেনদেন ব্যর্থ ❌',
-                message: `@${offlineItem.receiver}-এ ৳${offlineItem.amount} টাকা পাঠানো যায়নি। টাকা আপনার অ্যাকাউন্টে ফেরত দেওয়া হয়েছে।`,
+                message: `@${offlineItem.receiver}-এ ৳${offlineItem.amount} টাকা পাঠানো যায়নি।`,
               };
               if (this.reconciliationAlertCallback) {
                 this.reconciliationAlertCallback(failAlert);
