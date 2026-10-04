@@ -5,7 +5,7 @@ type SyncListener = () => void;
 type ReconciliationAlert = { title: string; message: string };
 
 class SyncService {
-  private syncTimer: ReturnType<typeof setInterval> | null = null;
+  private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private isSyncing = false;
   private syncStartTime = 0;
@@ -16,7 +16,7 @@ class SyncService {
   private pendingAlerts: ReconciliationAlert[] = [];
   private syncIntervalMs = 15000; // 15s delta sync interval
   private healthCheckIntervalMs = 10 * 60 * 1000; // 10 minutes — keeps Render free-tier awake
-  private maxSyncDurationMs = 30000; // 30s — force-reset if stuck
+  private maxSyncDurationMs = 12000; // 12s (< 15s interval) — force-reset a stuck sync fast
 
   /**
    * Register a callback to show popup alerts when offline transactions are reconciled.
@@ -424,21 +424,32 @@ class SyncService {
       return;
     }
 
-    console.log(`[SYNC SERVICE] Starting background sync timer for user: ${username}`);
+    console.log(`[SYNC SERVICE] Starting background sync loop for user: ${username}`);
 
-    // Run initial delta sync
-    this.deltaSync(username);
+    // Self-rescheduling loop: 5s while the offline queue has items (fast
+    // reconnect catch-up), otherwise the normal 15s cadence.
+    this.runSyncCycle(username);
 
-    // Schedule background interval
-    this.syncTimer = setInterval(() => {
-      this.deltaSync(username);
-    }, this.syncIntervalMs);
-
-    // Start health check timer to keep Render server awake (every 14 minutes)
+    // Health check timer to keep the Render server awake (every 10 minutes)
     this.runHealthCheck(); // immediate first ping
     this.healthTimer = setInterval(() => {
       this.runHealthCheck();
     }, this.healthCheckIntervalMs);
+  }
+
+  /** One sync cycle, then re-arm the next one with a queue-aware delay. */
+  private async runSyncCycle(username: string): Promise<void> {
+    if (!this.currentUsername || this.isPaused) return;
+    await this.deltaSync(username);
+    let delay = this.syncIntervalMs;
+    try {
+      const pending = await db.getPendingOfflineTransactions(username);
+      if (pending && pending.length > 0) delay = 5000; // fast retry while items are queued
+    } catch {}
+    if (this.currentUsername && !this.isPaused) {
+      if (this.syncTimer) clearTimeout(this.syncTimer);
+      this.syncTimer = setTimeout(() => { this.runSyncCycle(username); }, delay);
+    }
   }
 
   /**
@@ -447,7 +458,7 @@ class SyncService {
   stopBackgroundSync(): void {
     if (this.syncTimer) {
       console.log('[SYNC SERVICE] Stopping background sync timer');
-      clearInterval(this.syncTimer);
+      clearTimeout(this.syncTimer);
       this.syncTimer = null;
     }
     if (this.healthTimer) {

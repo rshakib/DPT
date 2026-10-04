@@ -27,6 +27,17 @@ async function getHeaders(authRequired = true) {
   return headers;
 }
 
+/**
+ * fetch() with an AbortController timeout. Without this, a slow/hung request
+ * (weak mobile data, Render free-tier cold start) leaves the sync loop blocked
+ * on `isSyncing` for its full stuck-reset window. Kept dependency-free.
+ */
+function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 export interface ApiResult<T> {
   success: boolean;
   message?: string;
@@ -42,7 +53,7 @@ export async function healthCheck(): Promise<boolean> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(`${BASE_URL}/`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/`, {
       method: 'GET',
       signal: controller.signal,
     });
@@ -118,7 +129,7 @@ export function isOfflineEnvelopeAllowed(info: ServerKeyInfo | null): boolean {
  */
 export async function getServerKeyInfo(): Promise<ServerKeyInfo | null> {
   try {
-    const response = await fetch(`${BASE_URL}/server-public-key`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/server-public-key`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -183,7 +194,7 @@ export function normalizeAuthPassword(pin: string): string {
 // 1. login(username, password)
 export async function login(username: string, password: string): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/login`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/login`, {
       method: 'POST',
       headers: await getHeaders(false),
       body: JSON.stringify({ username, password: normalizeAuthPassword(password) }),
@@ -262,7 +273,7 @@ export async function register(
     if (extraFields?.email) payload.email = extraFields.email;
     if (extraFields?.biometricEnrolled) payload.biometricEnrolled = extraFields.biometricEnrolled;
 
-    const response = await fetch(`${BASE_URL}/register`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/register`, {
       method: 'POST',
       headers: await getHeaders(false),
       body: JSON.stringify(payload),
@@ -288,7 +299,7 @@ export async function register(
 // 3. checkReceiver(username)
 export async function checkReceiver(username: string): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/check-receiver/${username}`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/check-receiver/${username}`, {
       method: 'GET',
       headers: await getHeaders(true),
     });
@@ -332,7 +343,7 @@ export async function transfer(
       headers['X-Idempotency-Key'] = idempotencyKey;
       headers['Idempotency-Key'] = idempotencyKey;
     }
-    const response = await fetch(`${BASE_URL}/transfer`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/transfer`, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
@@ -372,7 +383,7 @@ export async function transfer(
  */
 export async function claimTransfer(envelope: any): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/transfer/claim`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/transfer/claim`, {
       method: 'POST',
       headers: await getHeaders(true),
       body: JSON.stringify({ envelope }),
@@ -399,7 +410,7 @@ export async function claimTransfer(envelope: any): Promise<ApiResult<any>> {
 // 5. getUser(username)
 export async function getUser(username: string): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/user/${username}`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/user/${username}`, {
       method: 'GET',
       headers: await getHeaders(true),
     });
@@ -428,7 +439,7 @@ export async function getTransactions(username: string, sinceTimestamp?: string)
     if (sinceTimestamp) {
       url += `?since=${encodeURIComponent(sinceTimestamp)}`;
     }
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'GET',
       headers: await getHeaders(true),
     });
@@ -457,7 +468,7 @@ export async function getNotifications(username: string, sinceTimestamp?: string
     if (sinceTimestamp) {
       url += `?since=${encodeURIComponent(sinceTimestamp)}`;
     }
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'GET',
       headers: await getHeaders(true),
     });
@@ -482,7 +493,7 @@ export async function getNotifications(username: string, sinceTimestamp?: string
 // 8. verifyPin(username, pin) - dry-run check without updating session tokens
 export async function verifyPin(username: string, pin: string): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/login`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -515,7 +526,7 @@ export async function verifyPin(username: string, pin: string): Promise<ApiResul
 // 9. saveProfilePicture(username, imageData) - save to DB1
 export async function saveProfilePicture(username: string, imageData: string): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/profile-picture`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/profile-picture`, {
       method: 'POST',
       headers: await getHeaders(true),
       body: JSON.stringify({ username, imageData }),
@@ -539,7 +550,7 @@ export async function saveProfilePicture(username: string, imageData: string): P
 // 10. getProfilePicture(username) - get from DB1
 export async function getProfilePicture(username: string): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/profile-picture/${username}`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/profile-picture/${username}`, {
       method: 'GET',
       headers: await getHeaders(true),
     });
@@ -567,7 +578,7 @@ export async function reportSecurityIncident(incidentData: {
   timestamp?: string;
 }): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/security-incident`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/security-incident`, {
       method: 'POST',
       headers: await getHeaders(false),
       body: JSON.stringify({
@@ -596,7 +607,7 @@ export async function recordSecurityPenalty(
   reason: string
 ): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/security-penalty`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/security-penalty`, {
       method: 'POST',
       headers: await getHeaders(true),
       body: JSON.stringify({
@@ -629,7 +640,7 @@ export async function reportFailedTransaction(data: {
   reason: string;
 }): Promise<ApiResult<any>> {
   try {
-    const response = await fetch(`${BASE_URL}/bank-transaction-failure`, {
+    const response = await fetchWithTimeout(`${BASE_URL}/bank-transaction-failure`, {
       method: 'POST',
       headers: await getHeaders(false),
       body: JSON.stringify({

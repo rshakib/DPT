@@ -68,8 +68,6 @@ export default function QRPay() {
     setIsScanning(true);
 
     try {
-      const parsed = JSON.parse(data);
-
       // =========================================================================
       // 2-WAY OFFLINE HANDSHAKE: RECEIVER SCANS THE SENDER'S SIGNED ENVELOPE P
       // The receiver relays the SAME immutable envelope to POST /transfer/claim;
@@ -148,6 +146,10 @@ export default function QRPay() {
         );
         return;
       }
+
+      // Offline receipt QRs use the compact "HTE1.…" form and are handled above;
+      // everything else is the JSON QR format.
+      const parsed = JSON.parse(data);
 
       if (parsed.app === 'dpt' && parsed.username) {
         const username = parsed.username.trim().toLowerCase();

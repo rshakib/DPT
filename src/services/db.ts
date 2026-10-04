@@ -73,11 +73,12 @@ function isLocalOnlyId(id: unknown): boolean {
   return LOCAL_ONLY_ID_PREFIXES.some((prefix) => str.startsWith(prefix));
 }
 
-// Only these local placeholders are dropped once the server returns the canonical
-// row. Outgoing queue rows (OFF-) are excluded on purpose: they are removed by the
-// sync flush on settlement, and hiding them here could mask a genuinely new
-// transfer of the same amount to the same receiver.
-const SUPERSEDABLE_LOCAL_PREFIXES = ['OFF-REC-', 'LOCAL-RECV-', 'NFC-'];
+// Local placeholder rows that should be replaced by their canonical server row once
+// it arrives. `OFF-` also covers `OFF-REC-`/`OFF-SRV-`; `FAIL-` covers failed/refunded
+// offline rows. They are dropped ONLY when a genuinely matching server row exists
+// (same amount + shared party, written at/after the placeholder), so a newer transfer
+// of the same amount to the same receiver is never masked.
+const SUPERSEDABLE_LOCAL_PREFIXES = ['OFF-', 'FAIL-', 'SRV-', 'NFC-', 'LOCAL-RECV-'];
 
 function isSupersedableLocalId(id: unknown): boolean {
   if (id === null || id === undefined) return false;
@@ -88,36 +89,60 @@ function isSupersedableLocalId(id: unknown): boolean {
 const LOCAL_ONLY_WHERE = LOCAL_ONLY_ID_PREFIXES.map((p) => `id LIKE '${p}%'`).join(' OR ');
 
 const SUPERSEDE_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Device/server clock-skew allowance when comparing a placeholder to a server row.
+const SUPERSEDE_SKEW_MS = 10 * 60 * 1000;
 
-function txSignature(tx: any): string {
-  const amount = Number(tx.amount || 0).toFixed(2);
-  const sender = String(tx.sender_username || tx.sender || '').toLowerCase();
-  const receiver = String(tx.receiver_username || tx.receiver || '').toLowerCase();
-  return `${sender}>${receiver}@${amount}`;
+/**
+ * Parties + amount of a transaction. Server rows carry only ONE side
+ * (`receiver_username` on a sent row, `sender_username` on a received row), so a
+ * signature over both parties can never match a placeholder that has both sides.
+ */
+function txParties(tx: any): { sender: string; receiver: string; amount: string } {
+  return {
+    sender: String(tx.sender_username || tx.sender || '').trim().toLowerCase(),
+    receiver: String(tx.receiver_username || tx.receiver || '').trim().toLowerCase(),
+    amount: Number(tx.amount || 0).toFixed(2),
+  };
+}
+
+/** True when a local placeholder and a server row describe the same transfer. */
+function sameTransfer(localTx: any, serverTx: any): boolean {
+  const a = txParties(localTx);
+  const b = txParties(serverTx);
+  if (a.amount !== b.amount) return false;
+  const senderShared = !!(a.sender && b.sender);
+  const receiverShared = !!(a.receiver && b.receiver);
+  if (senderShared && a.sender !== b.sender) return false;
+  if (receiverShared && a.receiver !== b.receiver) return false;
+  // At least one party must be present on both sides to call it the same transfer.
+  return senderShared || receiverShared;
 }
 
 /**
- * Hide on-device received-credit placeholders (offline NFC / QR receipts) once the
- * server has returned the canonical transaction for the same transfer. Without
- * this, the placeholder and its server counterpart both appear in Recent Activity
- * / History as duplicates.
+ * Hide on-device placeholder rows (offline queue rows, NFC / QR receipts, failed
+ * offline rows) once the server has returned the canonical transaction for the same
+ * transfer. Without this the placeholder and its server counterpart both appear in
+ * Recent Activity / History as duplicates.
  */
 function dropSupersededLocalRows(rows: any[]): any[] {
-  const candidates = rows.filter((r) => isSupersedableLocalId(r.id));
-  if (candidates.length === 0) return rows;
+  if (!rows.some((r) => isSupersedableLocalId(r.id))) return rows;
 
   const serverRows = rows.filter((r) => !isLocalOnlyId(r.id));
   if (serverRows.length === 0) return rows;
 
   return rows.filter((row) => {
     if (!isSupersedableLocalId(row.id)) return true;
+    const localTime = toEpoch(row.created_at || row.createdAt || row.timestamp);
 
     return !serverRows.some((server) => {
-      if (txSignature(server) !== txSignature(row)) return false;
-      const rowTime = toEpoch(row.created_at || row.createdAt || row.timestamp);
+      if (!sameTransfer(row, server)) return false;
       const serverTime = toEpoch(server.created_at || server.createdAt || server.timestamp);
-      if (rowTime === 0 || serverTime === 0) return true;
-      return Math.abs(serverTime - rowTime) <= SUPERSEDE_WINDOW_MS;
+      // No usable timestamps -> fall back to the content match above.
+      if (localTime === 0 || serverTime === 0) return true;
+      // A server row written clearly BEFORE the placeholder belongs to an earlier
+      // transfer of the same amount -> keep this placeholder.
+      if (serverTime < localTime - SUPERSEDE_SKEW_MS) return false;
+      return serverTime - localTime <= SUPERSEDE_WINDOW_MS;
     });
   });
 }

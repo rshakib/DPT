@@ -47,3 +47,7 @@ android/.idea/
 android/*.iml
 android/app/*.iml
 android/local.properties
+
+# APK / build binaries (never commit these)
+download/apk/
+*.apk

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing } from '../constants/theme';
 import { LogoMark } from '../components/Logo';
@@ -44,7 +45,51 @@ export default function Login() {
   const [showErrorBanner, setShowErrorBanner] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Login is 2-factor: PIN then biometric (both required when the device supports it).
+  const [step, setStep] = useState<'credentials' | 'biometric'>('credentials');
+  const [bioAvailable, setBioAvailable] = useState(false);
+  const [isBioAuthing, setIsBioAuthing] = useState(false);
+  const [bioError, setBioError] = useState<string | null>(null);
+
   const usernameRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const hw = await LocalAuthentication.hasHardwareAsync();
+        const en = hw ? await LocalAuthentication.isEnrolledAsync() : false;
+        setBioAvailable(hw && en);
+      } catch {
+        setBioAvailable(false);
+      }
+    })();
+  }, []);
+
+  const completeLogin = () => {
+    unlock();
+    router.replace('/dashboard');
+  };
+
+  const triggerBiometricAuth = async () => {
+    try {
+      setIsBioAuthing(true);
+      setBioError(null);
+      const res = await LocalAuthentication.authenticateAsync({
+        promptMessage: language === 'en' ? 'Scan fingerprint to finish login' : 'লগইন শেষ করতে ফিঙ্গারপ্রিন্ট দিন',
+        fallbackLabel: language === 'en' ? 'Cancel' : 'বাতিল',
+        disableDeviceFallback: false,
+      });
+      setIsBioAuthing(false);
+      if (res.success) {
+        completeLogin();
+      } else if (res.error !== 'user_cancel' && res.error !== 'system_cancel') {
+        setBioError(res.error || (language === 'en' ? 'Biometric failed' : 'বায়োমেট্রিক ব্যর্থ'));
+      }
+    } catch (e: any) {
+      setIsBioAuthing(false);
+      setBioError(e?.message || 'Error');
+    }
+  };
 
   const isFormValid = username.trim() !== '' && password.length === 5 && !isLoading;
 
@@ -75,8 +120,13 @@ export default function Login() {
 
     setIsLoading(false);
     if (result.success) {
-      unlock();
-      router.replace('/dashboard');
+      // Step 2 of 2: biometric (skipped only when the device has none).
+      if (bioAvailable) {
+        setStep('biometric');
+        setTimeout(() => triggerBiometricAuth(), 300);
+      } else {
+        completeLogin();
+      }
     } else {
       setErrorMessage(result.message || null);
       setShowErrorBanner(true);
@@ -96,6 +146,37 @@ export default function Login() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: '#FFFFFF' }]}>
+      {step === 'biometric' ? (
+        <View style={styles.biometricSection}>
+          <View style={styles.logoSection}>
+            <LogoMark size={200} />
+            <Text style={[styles.brandSlogan, { color: '#999' }]}>Digital Pocket Transaction</Text>
+          </View>
+          <Ionicons name="finger-print" size={72} color={theme.primary} />
+          <Text style={[styles.biometricTitle, { color: '#333' }]}>
+            {language === 'en' ? 'Verify your identity' : 'আপনার পরিচয় যাচাই করুন'}
+          </Text>
+          <Text style={[styles.biometricSubtitle, { color: '#999' }]}>
+            {language === 'en' ? 'Step 2 of 2 — scan your fingerprint to finish login' : 'ধাপ ২/২ — লগইন শেষ করতে ফিঙ্গারপ্রিন্ট দিন'}
+          </Text>
+          {bioError && <Text style={[styles.biometricError, { color: theme.error }]}>{bioError}</Text>}
+          {isBioAuthing ? (
+            <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 16 }} />
+          ) : (
+            <TouchableOpacity style={[styles.loginButton, { backgroundColor: theme.primary, marginTop: 24, alignSelf: 'stretch' }]} onPress={triggerBiometricAuth}>
+              <Text style={[styles.loginButtonText, { color: '#FFFFFF' }]}>
+                {language === 'en' ? 'Scan Fingerprint' : 'ফিঙ্গারপ্রিন্ট দিন'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => { setStep('credentials'); setBioError(null); }} style={{ marginTop: 18 }}>
+            <Text style={[styles.linkText, { color: theme.primary }]}>
+              {language === 'en' ? 'Back to login' : 'লগইনে ফিরে যান'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+      <>
 
       {/* Red Warning Banner */}
       {showErrorBanner && (
@@ -253,6 +334,8 @@ export default function Login() {
           <Text style={[styles.linkText, { color: theme.primary }]}>{t.forgotK2Label}</Text>
         </TouchableOpacity>
       </View>
+      </>
+      )}
     </SafeAreaView>
   );
 }
@@ -400,5 +483,30 @@ const styles = StyleSheet.create({
     width: 1,
     height: 16,
     marginHorizontal: Spacing.lg,
+  },
+  biometricSection: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.xxl,
+  },
+  biometricTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginTop: Spacing.lg,
+    textAlign: 'center',
+  },
+  biometricSubtitle: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 6,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  biometricError: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 12,
+    textAlign: 'center',
   },
 });

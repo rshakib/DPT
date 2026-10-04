@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -44,6 +44,17 @@ export default function TransactionResult() {
   const errorReason = Array.isArray(params.errorReason) ? params.errorReason[0] : params.errorReason || '';
   const offlineReceipt = Array.isArray(params.offlineReceipt) ? params.offlineReceipt[0] : params.offlineReceipt || '';
   const [copied, setCopied] = useState(false);
+
+  // Offline receipt QR is single-use and expires 60s after it is shown.
+  const [receiptSecondsLeft, setReceiptSecondsLeft] = useState(60);
+  useEffect(() => {
+    if (!offlineReceipt) return;
+    setReceiptSecondsLeft(60);
+    const timer = setInterval(() => {
+      setReceiptSecondsLeft((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [offlineReceipt]);
 
   const isSuccess = status === 'success';
   const isPending = status === 'pending' || status === 'queued_offline' || status === 'submitted';
@@ -286,7 +297,7 @@ export default function TransactionResult() {
           </View>
         </View>
 
-        {/* Instant Offline Receiver Settlement Card */}
+        {/* Instant Offline Receiver Settlement Card — single-use QR, expires in 60s */}
         {(isSuccess || isPending) && Boolean(offlineReceipt) && (
           <View style={[styles.offlineCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
             <View style={styles.offlineCardHeader}>
@@ -295,19 +306,37 @@ export default function TransactionResult() {
                 {language === 'en' ? 'Instant Offline Receiver Credit' : 'প্রাপককে তাৎক্ষণিক অফলাইন টাকা দিন'}
               </Text>
             </View>
-            <Text style={[styles.offlineCardSubtitle, { color: theme.textSecondary }]}>
-              {language === 'en'
-                ? `Ask @${receiverUsername} to scan this QR code with their DPT app to claim ৳${amount} instantly offline.`
-                : `প্রাপক @${receiverUsername}-কে তার DPT অ্যাপ দিয়ে এই কিউআরটি স্ক্যান করতে বলুন যাতে তিনি অফলাইনেই সাথে সাথে ৳${amount} পেয়ে যান।`}
-            </Text>
-            <View style={styles.qrWrapper}>
-              <QRCode
-                value={offlineReceipt}
-                size={180}
-                color={theme.textDark || '#000000'}
-                backgroundColor="#FFFFFF"
-              />
-            </View>
+            {receiptSecondsLeft <= 0 ? (
+              <View style={styles.receiptExpired}>
+                <Ionicons name="timer-outline" size={44} color={theme.error} />
+                <Text style={[styles.receiptExpiredText, { color: theme.error }]}>
+                  {language === 'en' ? 'This QR has expired (1-minute limit).' : 'এই কিউআরটির সময় শেষ (১ মিনিট সীমা)।'}
+                </Text>
+                <Text style={[styles.offlineCardSubtitle, { color: theme.textSecondary }]}>
+                  {language === 'en' ? 'Start the payment again to get a fresh QR.' : 'নতুন কিউআর পেতে আবার পেমেন্ট শুরু করুন।'}
+                </Text>
+              </View>
+            ) : (
+              <>
+                <Text style={[styles.offlineCardSubtitle, { color: theme.textSecondary }]}>
+                  {language === 'en'
+                    ? `Ask @${receiverUsername} to scan this QR code with their DPT app to claim ৳${amount} instantly offline.`
+                    : `প্রাপক @${receiverUsername}-কে তার DPT অ্যাপ দিয়ে এই কিউআরটি স্ক্যান করতে বলুন যাতে তিনি অফলাইনেই সাথে সাথে ৳${amount} পেয়ে যান।`}
+                </Text>
+                <View style={styles.qrWrapper}>
+                  <QRCode
+                    value={offlineReceipt}
+                    size={260}
+                    ecl="L"
+                    color={theme.textDark || '#000000'}
+                    backgroundColor="#FFFFFF"
+                  />
+                </View>
+                <Text style={[styles.receiptTimer, { color: theme.primary }]}>
+                  {language === 'en' ? `Valid for ${receiptSecondsLeft}s · single use` : `${receiptSecondsLeft} সেকেন্ড · একবার ব্যবহারযোগ্য`}
+                </Text>
+              </>
+            )}
             <View style={styles.offlineBadge}>
               <Ionicons name="shield-checkmark" size={14} color={theme.success} />
               <Text style={[styles.offlineBadgeText, { color: theme.success }]}>
@@ -616,5 +645,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     marginLeft: 6,
+  },
+  receiptTimer: {
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: Spacing.xs,
+    textAlign: 'center',
+  },
+  receiptExpired: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.xl,
+  },
+  receiptExpiredText: {
+    fontSize: 14,
+    fontWeight: '800',
+    textAlign: 'center',
   },
 });

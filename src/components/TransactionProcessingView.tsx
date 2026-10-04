@@ -20,6 +20,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { translations } from '../constants/translations';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+import { serializeEnvelopeP } from '../services/crypto';
 import * as db from '../services/db';
 import { syncService } from '../services/sync';
 
@@ -178,8 +179,13 @@ export function TransactionProcessingView({
 
         const errorMsg = (result?.message || '').toLowerCase();
         const isNetwork = errorMsg.includes('network') || errorMsg.includes('fetch') || errorMsg.includes('connection failed');
+        // Permanent business errors must not be retried — retrying only spams the
+        // server and can create duplicate failed history rows.
+        const isPermanent = errorMsg.includes('receiver not found') || errorMsg.includes('not found')
+          || errorMsg.includes('invalid') || errorMsg.includes('not allowed')
+          || errorMsg.includes('forbidden') || errorMsg.includes('limit exceeded');
         // If offline network error on initial attempt, exit loop to queue offline
-        if (isNetwork) {
+        if (isNetwork || isPermanent) {
           break;
         }
 
@@ -250,7 +256,7 @@ export function TransactionProcessingView({
           // Paper §4.1: the offline handoff QR carries the sender-signed HTE
           // envelope P itself — no ad-hoc HMAC receipt. The receiver relays the
           // same P to POST /transfer/claim; settlement stays server-authoritative.
-          const offlineReceiptJson = envelope ? JSON.stringify(envelope) : '';
+          const offlineReceiptJson = envelope ? serializeEnvelopeP(envelope) : '';
 
           await db.savePendingOfflineTransaction(user.username, cleanedReceiver, cleanedAmount, String(type), offlineRef, {
             retryCount: 0,

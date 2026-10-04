@@ -69,6 +69,32 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return out;
 }
 
+// Helper: base64url encode/decode used by the compact QR payload.
+const _B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const _B64_LOOKUP: Record<string, number> = (() => {
+  const m: Record<string, number> = {};
+  for (let i = 0; i < _B64_ALPHABET.length; i++) m[_B64_ALPHABET[i]] = i;
+  return m;
+})();
+function bytesToBase64Url(bytes: Uint8Array): string {
+  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function base64UrlToBytes(s: string): Uint8Array {
+  const clean = String(s).replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+  let o = 0;
+  for (let i = 0; i < clean.length; i += 4) {
+    const c0 = _B64_LOOKUP[clean[i]] ?? 0;
+    const c1 = _B64_LOOKUP[clean[i + 1]] ?? 0;
+    const c2 = clean[i + 2] !== undefined ? _B64_LOOKUP[clean[i + 2]] : -1;
+    const c3 = clean[i + 3] !== undefined ? _B64_LOOKUP[clean[i + 3]] : -1;
+    out[o++] = (c0 << 2) | (c1 >> 4);
+    if (c2 >= 0) out[o++] = ((c1 & 15) << 4) | (c2 >> 2);
+    if (c3 >= 0) out[o++] = ((c2 & 3) << 6) | c3;
+  }
+  return out.subarray(0, o);
+}
+
 // Helper: Convert Uint8Array or Buffer to hex string
 export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
@@ -414,13 +440,56 @@ export async function verifyQRPayload(
  * the receiver parses it and submits the SAME immutable P to `POST /transfer/claim`
  * so settlement stays receiver-authoritative.
  */
+/**
+ * Compact, scannable QR encoding of the signed envelope P.
+ *
+ * The full envelope JSON (hex fields + a duplicated AAD) is ~780 chars, which
+ * renders as a ~101-module QR — too dense to decode at phone-screen sizes. This
+ * drops the AAD duplication and base64url-encodes the binary fields (~500 chars,
+ * ~2/3 the size), and `parseEnvelopeP` rebuilds the exact envelope the receiver
+ * relays to POST /transfer/claim.
+ */
 export function serializeEnvelopeP(envelope: HTEEnvelopePackage): string {
-  return JSON.stringify(envelope);
+  const compact = {
+    v: envelope.v,
+    k: envelope.KeyID,
+    n: envelope.AAD.N,
+    s: envelope.AAD.S,
+    t: envelope.AAD.T,
+    x: envelope.AAD.TxID,
+    e: bytesToBase64Url(hexToBytes(envelope.ePK)),
+    i: bytesToBase64Url(hexToBytes(envelope.IV)),
+    c: bytesToBase64Url(hexToBytes(envelope.C)),
+    g: bytesToBase64Url(hexToBytes(envelope.Tag)),
+    z: bytesToBase64Url(hexToBytes(envelope.Sig)),
+  };
+  return 'HTE1.' + JSON.stringify(compact);
 }
 
 export function parseEnvelopeP(raw: string): HTEEnvelopePackage | null {
   if (!raw) return null;
   try {
+    // Compact form (preferred, produced by serializeEnvelopeP).
+    if (raw.startsWith('HTE1.')) {
+      const c = JSON.parse(raw.slice(5));
+      if (!c || !c.e || !c.z) return null;
+      const ePK = bytesToHex(base64UrlToBytes(c.e));
+      const IV = bytesToHex(base64UrlToBytes(c.i));
+      const C = bytesToHex(base64UrlToBytes(c.c));
+      const Tag = bytesToHex(base64UrlToBytes(c.g));
+      const Sig = bytesToHex(base64UrlToBytes(c.z));
+      return {
+        v: c.v,
+        KeyID: c.k,
+        AAD: { KeyID: c.k, N: c.n, S: c.s, T: c.t, TxID: c.x, ePK, v: c.v },
+        ePK,
+        IV,
+        C,
+        Tag,
+        Sig,
+      };
+    }
+    // Legacy full-JSON form.
     const obj = JSON.parse(raw);
     if (obj && obj.ePK && obj.AAD && obj.Sig) {
       return obj as HTEEnvelopePackage;

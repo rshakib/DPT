@@ -61,13 +61,10 @@ export function TransactionAuthScreen({
   const [pinError, setPinError] = useState<string | null>(null);
 
   // Biometrics Hardware Check States
-  const [hasBiometricHardware, setHasBiometricHardware] = useState(true);
-  const [isBiometricEnrolled, setIsBiometricEnrolled] = useState(true);
+  const [hasBiometricHardware, setHasBiometricHardware] = useState(false);
+  const [isBiometricEnrolled, setIsBiometricEnrolled] = useState(false);
 
-  // Flow State: Unlocked only after biometric success (or automatic fallback if unavailable)
-  const [isBiometricVerified, setIsBiometricVerified] = useState(false);
-
-  // Status logs
+  // PIN pad is always shown; biometric is an optional shortcut on top of it.
   const [biometricStatus, setBiometricStatus] = useState<BiometricStatus>('checking');
   const [biometricError, setBiometricError] = useState<string | null>(null);
 
@@ -162,7 +159,6 @@ export function TransactionAuthScreen({
       setHasBiometricHardware(hasHardware);
       if (!hasHardware) {
         setBiometricStatus('not-supported');
-        setIsBiometricVerified(true);
         return;
       }
 
@@ -171,25 +167,14 @@ export function TransactionAuthScreen({
       setIsBiometricEnrolled(isEnrolled);
       if (!isEnrolled) {
         setBiometricStatus('not-enrolled');
-        setIsBiometricVerified(true);
         return;
       }
 
       setBiometricStatus('enrolled');
-      setIsBiometricVerified(false);
-      
-      // Auto-trigger biometric prompt on screen load
-      setTimeout(() => {
-        if (isMounted.current) {
-          triggerBiometricAuth();
-        }
-      }, 500);
-
     } catch (err: any) {
       if (isMounted.current) {
         setBiometricStatus('failed');
         setBiometricError(err.message || 'Biometric initialization failed.');
-        setIsBiometricVerified(true);
       }
     }
   };
@@ -229,7 +214,11 @@ export function TransactionAuthScreen({
           level: 'info',
         });
         setBiometricStatus('success');
-        setIsBiometricVerified(true);
+        // Biometric alone is sufficient — authorize immediately.
+        stopAnimations();
+        setTimeout(() => {
+          if (isMounted.current) safeAuthorized();
+        }, 300);
       } else {
         Sentry.addBreadcrumb({
           category: 'auth',
@@ -237,7 +226,6 @@ export function TransactionAuthScreen({
           level: 'warning',
         });
         setBiometricStatus('failed');
-        setIsBiometricVerified(false);
         if (result.error !== 'user_cancel' && result.error !== 'system_cancel') {
           setBiometricError(result.error || 'Biometric authentication failed.');
         }
@@ -245,7 +233,6 @@ export function TransactionAuthScreen({
     } catch (err: any) {
       if (isMounted.current) {
         setBiometricStatus('failed');
-        setIsBiometricVerified(false);
         setBiometricError(err.message || 'Authentication error.');
       }
     }
@@ -253,7 +240,7 @@ export function TransactionAuthScreen({
 
   // Custom PIN key press handler
   const handleNumPress = async (num: number) => {
-    if (!isBiometricVerified || isPinVerifying) return;
+    if (isPinVerifying) return;
 
     if (pin.length < pinLength) {
       const nextPin = pin + num;
@@ -320,7 +307,7 @@ export function TransactionAuthScreen({
   };
 
   const handleBackspace = () => {
-    if (!isBiometricVerified || isPinVerifying) return;
+    if (isPinVerifying) return;
 
     if (pin.length > 0) {
       setPin(pin.slice(0, -1));
@@ -329,7 +316,11 @@ export function TransactionAuthScreen({
   };
 
   const isBiometricActive = hasBiometricHardware && isBiometricEnrolled;
-  const isPinPadActive = isBiometricVerified && !isPinVerifying;
+  const isPinPadActive = !isPinVerifying;
+  const useBiometric = () => {
+    setBiometricError(null);
+    triggerBiometricAuth();
+  };
 
   // Create an array of dots matching pinLength
   const dotsArray = Array.from({ length: pinLength });
@@ -349,99 +340,23 @@ export function TransactionAuthScreen({
           <Text style={[styles.amountText, { color: theme.primary }]}>৳ {parseFloat(amount || '0').toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text>
         </View>
 
-        {/* Visual Progress Checklist */}
-        <View style={[styles.checklistContainer, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-          {/* Step 1: Biometric Verification */}
-          <View style={styles.checkItem}>
-            <Ionicons
-              name={isBiometricVerified ? "checkmark-circle" : "ellipse-outline"}
-              size={20}
-              color={
-                isBiometricVerified
-                  ? '#09C487'
-                  : biometricStatus === 'authenticating'
-                  ? theme.primary
-                  : theme.textSecondary
-              }
-            />
-            <Text style={[
-              styles.checkItemText,
-              isBiometricVerified
-                ? [styles.checkItemTextDone, { color: theme.textSecondary }]
-                : biometricStatus === 'authenticating'
-                ? [styles.checkItemTextActive, { color: theme.primary }]
-                : [styles.checkItemTextPending, { color: theme.border }]
-            ]}>
-              {!isBiometricActive
-                ? t.biometricsUnavailableSkipped || 'Biometrics (Unavailable - Skipped)'
-                : isBiometricVerified
-                ? t.biometricsVerified || 'Biometrics Verified'
-                : t.verifyBiometricsPrompt || 'Verify Biometrics'}
-            </Text>
-          </View>
-
-          {/* Step 2: PIN Entry */}
-          <View style={styles.checkItem}>
-            <Ionicons
-              name={pin.length === pinLength ? "checkmark-circle" : "ellipse-outline"}
-              size={20}
-              color={
-                pin.length === pinLength
-                  ? '#09C487'
-                  : isBiometricVerified
-                  ? theme.primary
-                  : theme.border
-              }
-            />
-            <Text style={[
-              styles.checkItemText,
-              pin.length === pinLength
-                ? [styles.checkItemTextDone, { color: theme.textSecondary }]
-                : isBiometricVerified
-                ? [styles.checkItemTextActive, { color: theme.primary }]
-                : [styles.checkItemTextPending, { color: theme.border }]
-            ]}>
-              {t.enterDigitsPin?.replace('{pinLength}', String(pinLength)) || `Enter ${pinLength}-Digit PIN`}
-            </Text>
-          </View>
-        </View>
-
-        {/* Biometric Interactive Section */}
+        {/* Optional biometric shortcut — the PIN pad is always shown below. */}
         {isBiometricActive && (
-          <View style={styles.biometricSection}>
-            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-              <TouchableOpacity
-                onPress={triggerBiometricAuth}
-                style={[
-                  styles.fingerprintButton,
-                  { backgroundColor: theme.cardBg, borderColor: theme.border },
-                  isBiometricVerified && [styles.fingerprintSuccess, { backgroundColor: '#09C487', borderColor: '#09C487' }],
-                  biometricStatus === 'failed' && !isBiometricVerified && [styles.fingerprintFailed, { borderColor: theme.error }],
-                ]}
-                activeOpacity={0.8}
-                disabled={isBiometricVerified}
-              >
-                <Ionicons
-                  name={isBiometricVerified ? 'checkmark' : 'finger-print'}
-                  size={44}
-                  color={
-                    isBiometricVerified
-                      ? '#FFFFFF'
-                      : biometricStatus === 'failed'
-                      ? theme.error
-                      : theme.primary
-                  }
-                />
-              </TouchableOpacity>
-            </Animated.View>
-            <Text style={[styles.biometricPrompt, { color: theme.textSecondary }]}>
-              {isBiometricVerified
-                ? t.biometricVerifiedEnterPin || 'Biometrics verified. Enter PIN below.'
-                : t.tapRetryBiometricScan || 'Tap to retry biometric scan'}
+          <TouchableOpacity
+            style={[styles.bioAltBtn, { backgroundColor: theme.cardBg, borderColor: theme.border }]}
+            onPress={useBiometric}
+            disabled={isPinVerifying}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="finger-print" size={22} color={theme.primary} />
+            <Text style={[styles.bioAltText, { color: theme.primary }]}>
+              {biometricStatus === 'authenticating'
+                ? (language === 'en' ? 'Authenticating…' : 'যাচাই করা হচ্ছে…')
+                : (language === 'en' ? 'Use Biometric' : 'বায়োমেট্রিক ব্যবহার করুন')}
             </Text>
-            {biometricError && <Text style={[styles.biometricErrorText, { color: theme.error }]}>{biometricError}</Text>}
-          </View>
+          </TouchableOpacity>
         )}
+        {biometricError && <Text style={[styles.biometricErrorText, { color: theme.error }]}>{biometricError}</Text>}
 
         {/* Visual Indicators for Entered PIN */}
         <View style={styles.dotsAndLoaderContainer}>
@@ -547,21 +462,13 @@ export function TransactionAuthScreen({
 
           {/* Row 4 */}
           <View style={styles.pinRow}>
-            {/* Left extra key: Biometric retry trigger */}
+            {/* Left extra key: biometric */}
             <TouchableOpacity
               style={[styles.keyButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
-              onPress={triggerBiometricAuth}
-              disabled={!isBiometricActive || isBiometricVerified}
+              onPress={useBiometric}
+              disabled={!isBiometricActive || isPinVerifying}
             >
-              <Ionicons
-                name="finger-print"
-                size={24}
-                color={
-                  !isBiometricActive || isBiometricVerified
-                    ? theme.border
-                    : theme.primary
-                }
-              />
+              <Ionicons name="finger-print" size={24} color={isBiometricActive ? theme.primary : theme.border} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -748,5 +655,62 @@ const styles = StyleSheet.create({
   },
   disabledOpacity: {
     opacity: 0.35,
+  },
+  // Choose-one method picker
+  methodChooser: {
+    width: '100%',
+    gap: Spacing.md,
+    marginVertical: Spacing.sm,
+  },
+  chooserTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  methodCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    borderWidth: 1.5,
+    borderRadius: 16,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+  },
+  methodTextWrap: {
+    flex: 1,
+  },
+  methodTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  methodSub: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  switchMethodBtn: {
+    marginTop: Spacing.sm,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  switchMethodText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  bioAltBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    width: '100%',
+    marginVertical: Spacing.xs,
+  },
+  bioAltText: {
+    fontSize: 15,
+    fontWeight: '800',
   },
 });
