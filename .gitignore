@@ -51,3 +51,6 @@ android/local.properties
 # APK / build binaries (never commit these)
 download/apk/
 *.apk
+
+# SE wallet reference-model build output
+se-wallet/out/
